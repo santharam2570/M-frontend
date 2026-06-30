@@ -6,7 +6,8 @@ import type { NextConfig } from "next";
  */
 function getApiRemotePattern() {
   const apiBaseUrl =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "http://13.232.63.210:5000";
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "https://supernova-contented-distress.ngrok-free.dev";
 
   try {
     const url = new URL(apiBaseUrl);
