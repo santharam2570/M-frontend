@@ -1,26 +1,178 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-heading: Arial, Helvetica, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  --background: #f8f9fa;
+  --foreground: #333333;
+  --card: #ffffff;
+  --card-foreground: #333333;
+  --popover: #ffffff;
+  --popover-foreground: #333333;
+  --primary: #003399;
+  --primary-foreground: #ffffff;
+  --secondary: #f5f7fa;
+  --secondary-foreground: #333333;
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+  --accent: #f3f4f6;
+  --accent-foreground: #333333;
+  --destructive: #e53935;
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #003399;
+  --chart-1: #3b82f6;
+  --chart-2: #14b8a6;
+  --chart-3: #ec4899;
+  --chart-4: #f97316;
+  --chart-5: #eab308;
+  --radius: 0.625rem;
+  --sidebar: #003399;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #003399;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e53935;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.15);
+  --sidebar-ring: #e53935;
+}
+
+.dark {
+  --background: #0f1419;
+  --foreground: #f5f7fa;
+  --card: #1a2332;
+  --card-foreground: #f5f7fa;
+  --popover: #1a2332;
+  --popover-foreground: #f5f7fa;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #1a2332;
+  --secondary-foreground: #f5f7fa;
+  --muted: #1a2332;
+  --muted-foreground: #9aa3b2;
+  --accent: #1a2332;
+  --accent-foreground: #f5f7fa;
+  --destructive: #e53935;
+  --border: #2d3748;
+  --input: #2d3748;
+  --ring: #3b82f6;
+  --chart-1: #3b82f6;
+  --chart-2: #14b8a6;
+  --chart-3: #ec4899;
+  --chart-4: #f97316;
+  --chart-5: #eab308;
+  --sidebar: #002e6e;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #003399;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e53935;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.15);
+  --sidebar-ring: #e53935;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }
 
-body {
+.email-quill-editor .quill {
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
   background: var(--background);
+  overflow: hidden;
+}
+
+.email-quill-editor .ql-toolbar {
+  border: none !important;
+  border-bottom: 1px solid var(--border) !important;
+  background-color: var(--muted);
+  padding: 8px !important;
+}
+
+.email-quill-editor .ql-container {
+  border: none !important;
+  flex: 1;
+  font-size: 0.875rem;
+}
+
+.email-quill-editor .ql-editor {
+  min-height: 150px;
+  font-family: inherit;
+  padding: 1rem;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+.email-quill-editor .ql-editor.ql-blank::before {
+  color: var(--muted-foreground);
+  font-style: normal;
+}
+
+.globe-location-pin {
+  position: absolute;
+  top: anchor(top);
+  left: anchor(center);
+  z-index: 20;
+  pointer-events: none;
+  translate: -50% 0;
+  transition:
+    opacity 0.25s ease,
+    filter 0.25s ease;
 }
