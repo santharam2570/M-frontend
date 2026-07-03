@@ -1792,8 +1792,8 @@ export function CustomerSettings() {
       <Card className="border-none shadow-sm">
         <CardContent>
         <Tabs defaultValue="statuses" className="w-full" onValueChange={setActiveTab}>
-          <div className="flex items-center justify-between mb-6">
-            <TabsList className="bg-gray-100">
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <TabsList className="w-full justify-start overflow-x-auto bg-gray-100">
               <TabsTrigger value="statuses" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">
                 Statuses
               </TabsTrigger>
@@ -1884,13 +1884,13 @@ export function CustomerSettings() {
 
           {/* Statuses Tab Content */}
           <TabsContent value="statuses" className="mt-0">
-            <Table>
+            <div className="responsive-table-wrap"><Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] text-left">Name</TableHead>
-                  <TableHead className="w-[200px] text-left">Type</TableHead>
-                  <TableHead className="w-[200px] text-left">Created On</TableHead>
-                  <TableHead className="w-[100px] text-center">Action</TableHead>
+                  <TableHead className="min-w-[140px] text-left">Name</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Type</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Created On</TableHead>
+                  <TableHead className="min-w-[80px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1989,17 +1989,17 @@ export function CustomerSettings() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </Table></div>
           </TabsContent>
 
           {/* Source Tab Content */}
           <TabsContent value="source" className="mt-0">
-            <Table>
+            <div className="responsive-table-wrap"><Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] text-left">Name</TableHead>
-                  <TableHead className="w-[200px] text-left">Created On</TableHead>
-                  <TableHead className="w-[100px] text-center">Action</TableHead>
+                  <TableHead className="min-w-[140px] text-left">Name</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Created On</TableHead>
+                  <TableHead className="min-w-[80px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2070,17 +2070,17 @@ export function CustomerSettings() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </Table></div>
           </TabsContent>
 
           {/* Payment Terms Tab Content */}
           <TabsContent value="payment-terms" className="mt-0">
-            <Table>
+            <div className="responsive-table-wrap"><Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] text-left">Name</TableHead>
-                  <TableHead className="w-[200px] text-left">Created On</TableHead>
-                  <TableHead className="w-[100px] text-center">Action</TableHead>
+                  <TableHead className="min-w-[140px] text-left">Name</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Created On</TableHead>
+                  <TableHead className="min-w-[80px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2159,18 +2159,18 @@ export function CustomerSettings() {
                   ))
                 )}
               </TableBody>
-            </Table>
+            </Table></div>
           </TabsContent>
 
           {/* Customer Type Tab Content */}
           <TabsContent value="customer-type" className="mt-0">
-            <Table>
+            <div className="responsive-table-wrap"><Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] text-left">Name</TableHead>
-                  <TableHead className="w-[200px] text-left">Type</TableHead>
-                  <TableHead className="w-[200px] text-left">Created On</TableHead>
-                  <TableHead className="w-[100px] text-center">Action</TableHead>
+                  <TableHead className="min-w-[140px] text-left">Name</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Type</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Created On</TableHead>
+                  <TableHead className="min-w-[80px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2263,17 +2263,17 @@ export function CustomerSettings() {
                 ))
                 )}
               </TableBody>
-            </Table>
+            </Table></div>
           </TabsContent>
 
           {/* Interested In Tab Content */}
           <TabsContent value="customer-requirement" className="mt-0">
-            <Table>
+            <div className="responsive-table-wrap"><Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] text-left">Name</TableHead>
-                  <TableHead className="w-[200px] text-left">Created On</TableHead>
-                  <TableHead className="w-[100px] text-center">Action</TableHead>
+                  <TableHead className="min-w-[140px] text-left">Name</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Created On</TableHead>
+                  <TableHead className="min-w-[80px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2362,17 +2362,17 @@ export function CustomerSettings() {
                   ))
                 )}
               </TableBody>
-            </Table>
+            </Table></div>
           </TabsContent>
 
           {/* Not Qualified Reasons Tab Content */}
           <TabsContent value="not-qualified-reasons" className="mt-0">
-            <Table>
+            <div className="responsive-table-wrap"><Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] text-left">Name</TableHead>
-                  <TableHead className="w-[200px] text-left">Created On</TableHead>
-                  <TableHead className="w-[100px] text-center">Action</TableHead>
+                  <TableHead className="min-w-[140px] text-left">Name</TableHead>
+                  <TableHead className="min-w-[120px] text-left">Created On</TableHead>
+                  <TableHead className="min-w-[80px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2393,7 +2393,7 @@ export function CustomerSettings() {
                               <span className="sr-only">Open menu</span>
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-[200px]">
+                          <DropdownMenuContent align="end" className="min-w-[120px]">
                             <DropdownMenuItem
                               className="cursor-pointer"
                               onClick={() => handleEditNotQualifiedReason(reason)}
@@ -2415,7 +2415,7 @@ export function CustomerSettings() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </Table></div>
           </TabsContent>
           
         </Tabs>

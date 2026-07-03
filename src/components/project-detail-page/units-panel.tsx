@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -35,14 +36,17 @@ import {
   createUnitDraftFromUnit,
   getDefaultOptionValue,
   hasUnitDraftChanged,
+  matchesUnitStatusFilter,
   validateUnitDraft,
   type UnitDraft,
   type UnitDraftErrors,
+  type UnitStatusFilter,
 } from "./units/unit-utils"
 
 interface UnitsPanelProps {
   projectId: string
   units?: ProjectUnit[] | null
+  statusFilter?: UnitStatusFilter | null
   onRefresh?: () => void
   permissions?: UnitPermissions
 }
@@ -59,10 +63,12 @@ type AddUnitFormErrors = {
 export function UnitsPanel({
   projectId,
   units,
+  statusFilter = null,
   onRefresh,
   permissions = DEFAULT_UNIT_PERMISSIONS,
 }: UnitsPanelProps) {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [unitNo, setUnitNo] = useState("")
@@ -86,6 +92,29 @@ export function UnitsPanel({
     () => [...safeUnits].sort((a, b) => a.unit_no.localeCompare(b.unit_no)),
     [safeUnits],
   )
+
+  const filteredUnits = useMemo(
+    () =>
+      sortedUnits.filter((unit) =>
+        matchesUnitStatusFilter(unit.status, statusFilter, statusOptions),
+      ),
+    [sortedUnits, statusFilter, statusOptions],
+  )
+
+  const statusFilterLabel = useMemo(() => {
+    switch (statusFilter) {
+      case "available":
+        return "Available"
+      case "on_hold":
+        return "On Hold"
+      case "booked":
+        return "Booked"
+      case "owner_site":
+        return "Owner Site"
+      default:
+        return null
+    }
+  }, [statusFilter])
 
   const usesCents = CENTS_PROPERTY_TYPES.has(propertyType)
   const canCreateUnits = canPerformUnitAction(permissions, "create")
@@ -155,6 +184,11 @@ export function UnitsPanel({
     return errors
   }
 
+  const invalidateBookingQueries = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["booking-units"] })
+    void queryClient.invalidateQueries({ queryKey: ["booking-metrics"] })
+  }, [queryClient])
+
   const handleAddUnit = async () => {
     const errors = validateAddForm()
     setFormErrors(errors)
@@ -185,6 +219,7 @@ export function UnitsPanel({
       setDialogOpen(false)
       resetForm()
       onRefresh?.()
+      invalidateBookingQueries()
     } catch (error) {
       toast({
         title: "Error",
@@ -247,6 +282,7 @@ export function UnitsPanel({
       })
       handleCancelRowEdit()
       onRefresh?.()
+      invalidateBookingQueries()
     } catch (error) {
       toast({
         title: "Error",
@@ -260,7 +296,7 @@ export function UnitsPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
         <p className="text-sm text-muted-foreground">
           Manage project units, pricing, and availability status.
           {canPerformUnitAction(permissions, "edit")
@@ -268,7 +304,7 @@ export function UnitsPanel({
             : null}
         </p>
         {canCreateUnits ? (
-          <Button size="sm" onClick={() => setDialogOpen(true)}>
+          <Button size="sm" className="w-full sm:w-auto" onClick={() => setDialogOpen(true)}>
             <Plus className="mr-1.5 h-4 w-4" />
             Add Unit
           </Button>
@@ -280,9 +316,13 @@ export function UnitsPanel({
           No units added yet.
           {canCreateUnits ? " Click Add Unit to create the first one." : null}
         </div>
+      ) : filteredUnits.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+          No units with {statusFilterLabel} status.
+        </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200/80">
-          <Table>
+        <div className="responsive-table-wrap overflow-hidden rounded-lg border border-slate-200/80">
+          <Table className="min-w-[640px]">
             <TableHeader>
               <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
                 {UNIT_FIELD_DEFINITIONS.map((field) => (
@@ -292,7 +332,7 @@ export function UnitsPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedUnits.map((unit) => (
+              {filteredUnits.map((unit) => (
                 <UnitTableRow
                   key={unit._id}
                   projectId={projectId}

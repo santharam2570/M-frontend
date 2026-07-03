@@ -34,8 +34,8 @@ export const formModalFieldGroupClassName = "space-y-2"
 export const formModalLabelClassName = "text-sm font-medium text-foreground"
 export const formModalRequiredClassName = "text-destructive"
 export const formModalFooterClassName =
-  "flex shrink-0 flex-row-reverse items-center gap-3 border-t border-border bg-muted/40 px-6 pt-4 pb-6"
-export const formModalFooterButtonClassName = "h-10 min-w-[96px] rounded-md px-5"
+  "flex shrink-0 flex-col-reverse items-stretch gap-2 border-t border-border bg-muted/40 px-4 pt-4 pb-5 sm:flex-row sm:flex-row-reverse sm:items-center sm:gap-3 sm:px-6 sm:pb-6"
+export const formModalFooterButtonClassName = "h-10 w-full min-w-0 rounded-md px-5 sm:w-auto sm:min-w-[96px]"
 
 /** Lead detail page typography scale */
 export const leadDetailPageTitleClassName =

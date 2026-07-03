@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { FileText, Mail, MoreVertical, Trash2 } from "lucide-react"
 import { LeadActionDrawer } from "./lead-action-drawer"
-import { format, parse, startOfDay } from "date-fns"
+import { format, isPast, isToday, isWithinInterval, parse, startOfDay, endOfWeek, startOfWeek } from "date-fns"
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
@@ -49,7 +49,14 @@ import {
   parseFollowupDate,
   type FollowupDateEntry,
 } from "@/lib/followup-date"
-import { enrichLeadsWithOpenTasks, invalidateOpenTasksFollowupCache } from "@/lib/leads/enrich-leads-followup"
+import {
+  enrichLeadsWithFollowupMap,
+  enrichLeadsWithOpenTasks,
+  fetchOverdueFollowupMap,
+  fetchThisWeekFollowupMap,
+  fetchTodayFollowupMap,
+  invalidateOpenTasksFollowupCache,
+} from "@/lib/leads/enrich-leads-followup"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,7 +69,13 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Card, CardContent } from "@/components/ui/card"
-import { type ColumnPref, MAX_VISIBLE_COLUMNS, normalizeColumnKey, resolveColumnHeader } from "./columns-dropdown"
+import {
+  type ColumnPref,
+  DEFAULT_VISIBLE_KEYS,
+  MAX_VISIBLE_COLUMNS,
+  normalizeColumnKey,
+  resolveColumnHeader,
+} from "./columns-dropdown"
 
 
 // Update the Lead interface to include leadNo
@@ -438,13 +451,33 @@ function getStageOptionsForLead(
     .filter((option): option is LeadDropdownOption => option !== null)
 }
 
+function normalizeDropdownLookupValue(value: unknown): string {
+  if (value == null || value === "") return ""
+  if (typeof value === "string") return value.trim()
+  if (typeof value === "number" || typeof value === "boolean") return String(value).trim()
+  return getSettingItemId(value) || getSettingItemName(value)
+}
+
+function getLeadSettingDropdownValue(
+  lead: Lead,
+  idField: "lead_status" | "customer_type" | "customer_requirement",
+  nameField: "lead_status_name" | "customer_type_name" | "customer_requirement_name"
+): string {
+  const raw = lead as Lead & Record<string, unknown>
+  return (
+    getSettingIdFromApiField(raw, idField, nameField) ||
+    normalizeDropdownLookupValue(raw[nameField]) ||
+    normalizeDropdownLookupValue(raw[idField])
+  )
+}
+
 function getLeadDropdownOption(
   options: LeadDropdownOption[],
-  value?: string | null
+  value?: unknown
 ): LeadDropdownOption | undefined {
-  if (!value) return undefined
+  const normalized = normalizeDropdownLookupValue(value).toLowerCase()
+  if (!normalized) return undefined
 
-  const normalized = value.trim().toLowerCase()
   return options.find(
     (option) =>
       option.value.toLowerCase() === normalized || option.label.toLowerCase() === normalized
@@ -453,7 +486,7 @@ function getLeadDropdownOption(
 
 function getLeadDropdownColor(
   options: LeadDropdownOption[],
-  value?: string | null,
+  value?: unknown,
   fallback?: string
 ) {
   return getLeadDropdownOption(options, value)?.color || fallback || "#64748b"
@@ -539,6 +572,48 @@ function leadMatchesCreateDateRangeFilter(
   return true
 }
 
+const FOLLOWUP_TODAY_FIELDS = new Set(["followup_today", "today_followup"])
+const FOLLOWUP_THIS_WEEK_FIELDS = new Set(["followup_this_week", "followups_this_week"])
+
+function isFollowupTodayFilterActive(filters: LeadListFilter[]): boolean {
+  return filters.some((filter) => FOLLOWUP_TODAY_FIELDS.has(filter.field ?? ""))
+}
+
+function isFollowupThisWeekFilterActive(filters: LeadListFilter[]): boolean {
+  return filters.some((filter) => FOLLOWUP_THIS_WEEK_FIELDS.has(filter.field ?? ""))
+}
+
+function isOverdueFollowupFilterActive(filters: LeadListFilter[]): boolean {
+  return filters.some((filter) => filter.field === "overdue_followup")
+}
+
+function getPrimaryFollowupDate(lead: Lead): Date | null {
+  const followup = lead.next_followup_dates?.[0]
+  if (!hasFollowupDate(followup)) return null
+  return parseFollowupDate(followup!.date)
+}
+
+function leadHasFollowupToday(lead: Lead): boolean {
+  const followupDate = getPrimaryFollowupDate(lead)
+  return followupDate ? isToday(followupDate) : false
+}
+
+function leadHasFollowupThisWeek(lead: Lead): boolean {
+  const followupDate = getPrimaryFollowupDate(lead)
+  if (!followupDate) return false
+
+  const now = new Date()
+  return isWithinInterval(followupDate, {
+    start: startOfWeek(now, { weekStartsOn: 1 }),
+    end: endOfWeek(now, { weekStartsOn: 1 }),
+  })
+}
+
+function leadHasOverdueFollowup(lead: Lead): boolean {
+  const followupDate = getPrimaryFollowupDate(lead)
+  return followupDate ? isPast(followupDate) && !isToday(followupDate) : false
+}
+
 function applyClientSideFilters(leads: Lead[], filters: LeadListFilter[]): Lead[] {
   let result = leads
 
@@ -557,8 +632,77 @@ function applyClientSideFilters(leads: Lead[], filters: LeadListFilter[]): Lead[
   return result
 }
 
+function applyPostEnrichmentFilters(leads: Lead[], filters: LeadListFilter[]): Lead[] {
+  let result = leads
+
+  if (isFollowupTodayFilterActive(filters)) {
+    result = result.filter(leadHasFollowupToday)
+  }
+
+  if (isFollowupThisWeekFilterActive(filters)) {
+    result = result.filter(leadHasFollowupThisWeek)
+  }
+
+  if (isOverdueFollowupFilterActive(filters)) {
+    result = result.filter(leadHasOverdueFollowup)
+  }
+
+  return result
+}
+
 function hasClientSideFilters(filters: LeadListFilter[]): boolean {
   return Boolean(getStageFilterValue(filters) || getCreateDateRangeFromFilters(filters))
+}
+
+function hasPostEnrichmentFollowupFilter(filters: LeadListFilter[]): boolean {
+  return (
+    isFollowupTodayFilterActive(filters) ||
+    isFollowupThisWeekFilterActive(filters) ||
+    isOverdueFollowupFilterActive(filters)
+  )
+}
+
+function getLeadListFetchLength(filters: LeadListFilter[], isSearching: boolean): number {
+  if (!isSearching && !hasClientSideFilters(filters) && !hasPostEnrichmentFollowupFilter(filters)) {
+    return PAGE_SIZE
+  }
+  return 100
+}
+
+function shouldDisablePagination(filters: LeadListFilter[], isSearching: boolean): boolean {
+  return Boolean(isSearching) || hasClientSideFilters(filters) || hasPostEnrichmentFollowupFilter(filters)
+}
+
+function listShowsFollowupColumn(visibleColumns: ColumnPref[]): boolean {
+  return visibleColumns.some((column) => normalizeColumnKey(column.key) === "next_followup")
+}
+
+async function enrichLeadsForListView(
+  leads: Lead[],
+  token: string,
+  filters: LeadListFilter[],
+  visibleColumns: ColumnPref[],
+  signal?: AbortSignal,
+): Promise<Lead[]> {
+  if (leads.length === 0) return leads
+
+  const followupMetricFilterActive = hasPostEnrichmentFollowupFilter(filters)
+  const showFollowupColumn = listShowsFollowupColumn(visibleColumns)
+
+  if (followupMetricFilterActive) {
+    const followupMap = isFollowupTodayFilterActive(filters)
+      ? await fetchTodayFollowupMap(token, signal)
+      : isFollowupThisWeekFilterActive(filters)
+        ? await fetchThisWeekFollowupMap(token, signal)
+        : await fetchOverdueFollowupMap(token, signal)
+
+    const enriched = enrichLeadsWithFollowupMap(leads, followupMap)
+    return applyPostEnrichmentFilters(enriched, filters)
+  }
+
+  if (!showFollowupColumn) return leads
+
+  return enrichLeadsWithOpenTasks(leads, token, { skipAssociatesFallback: true })
 }
 
 function getSettingItemId(item: unknown): string {
@@ -659,6 +803,10 @@ function getSettingIdFromApiField(
   if (typeof directValue === "string" && directValue.trim()) {
     return directValue.trim()
   }
+  if (typeof directValue === "object" && directValue !== null) {
+    const id = getSettingItemId(directValue)
+    if (id) return id
+  }
 
   const namedField = raw[nameField]
   if (Array.isArray(namedField) && namedField.length > 0) {
@@ -745,17 +893,18 @@ function LeadFieldDropdown({
   triggerClassName,
   fallbackColor,
 }: {
-  currentValue?: string | null
+  currentValue?: unknown
   placeholder: string
   options: LeadDropdownOption[]
   onChange: (value: string) => void
   triggerClassName?: string
   fallbackColor?: string
 }) {
+  const lookupValue = normalizeDropdownLookupValue(currentValue)
   const selectedOption = getLeadDropdownOption(options, currentValue)
-  const displayLabel = selectedOption?.label || currentValue || placeholder
+  const displayLabel = selectedOption?.label || lookupValue || placeholder
   const displayColor = getLeadDropdownColor(options, currentValue, fallbackColor)
-  const hasValue = Boolean(selectedOption || currentValue?.trim())
+  const hasValue = Boolean(selectedOption || lookupValue)
 
   return (
     <DropdownMenu>
@@ -794,7 +943,9 @@ function LeadFieldDropdown({
             >
               <div className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: option.color }} />
               <span className="break-words">{option.label}</span>
-              {(selectedOption?.value === option.value || currentValue === option.label) && (
+              {(selectedOption?.value === option.value ||
+                lookupValue === option.value ||
+                lookupValue === option.label) && (
                 <Check className="ml-auto h-4 w-4 shrink-0" />
               )}
             </DropdownMenuItem>
@@ -818,7 +969,7 @@ function LeadStatusDropdown({
 }) {
   return (
     <LeadFieldDropdown
-      currentValue={lead.lead_status || lead.lead_status_name}
+      currentValue={getLeadSettingDropdownValue(lead, "lead_status", "lead_status_name")}
       placeholder="Select status"
       options={statusOptions}
       onChange={(value) => onStatusChange(lead._id, value)}
@@ -841,7 +992,7 @@ function LeadCustomerTypeDropdown({
 }) {
   return (
     <LeadFieldDropdown
-      currentValue={lead.customer_type || lead.customer_type_name}
+      currentValue={getLeadSettingDropdownValue(lead, "customer_type", "customer_type_name")}
       placeholder="Select customer type"
       options={customerTypeOptions}
       onChange={(value) => onCustomerTypeChange(lead._id, value)}
@@ -958,14 +1109,16 @@ function CustomerRequirementValue({ value }: { value: unknown }) {
 const getColumnTextAlign = (column: string) =>
   CENTER_ALIGNED_COLUMNS.has(normalizeColumnKey(column)) ? "text-center" : "text-left"
 
-const getColumnCellClass = (column: string, isCompactView: boolean, wrap?: boolean) =>
-  cn(
+const getColumnCellClass = (column: string, isCompactView: boolean, wrap?: boolean) => {
+  const normalizedColumn = normalizeColumnKey(column)
+  return cn(
     "px-4 align-middle text-sm",
     getColumnTextAlign(column),
-    !NO_TRUNCATE_COLUMNS.has(column) && "max-w-0",
+    !NO_TRUNCATE_COLUMNS.has(normalizedColumn) && "max-w-0",
     wrap ? "whitespace-normal" : "whitespace-nowrap",
     isCompactView ? "py-2" : "py-3"
   )
+}
 
 const getColumnHeadClass = (column: string, isCompactView: boolean) =>
   cn(
@@ -1104,7 +1257,7 @@ const normalizeLead = (lead: Lead): Lead => {
       ) || raw.customer_requirement_color,
     customer_type:
       getSettingIdFromApiField(normalizedRaw, "customer_type", "customer_type_name") ||
-      raw.customer_type,
+      getIdsFromApiField(raw.customer_type),
     customer_type_name:
       customerTypeName ||
       (typeof raw.customer_type === "string" ? raw.customer_type : ""),
@@ -1112,7 +1265,8 @@ const normalizeLead = (lead: Lead): Lead => {
       getSettingColorFromApiField(normalizedRaw, "customer_type_name", raw.customer_type_color) ||
       raw.customer_type_color,
     lead_status:
-      getSettingIdFromApiField(normalizedRaw, "lead_status", "lead_status_name") || raw.lead_status,
+      getSettingIdFromApiField(normalizedRaw, "lead_status", "lead_status_name") ||
+      getIdsFromApiField(raw.lead_status),
     lead_status_name: leadStatusName,
     lead_status_color:
       getSettingColorFromApiField(normalizedRaw, "lead_status_name", raw.lead_status_color) ||
@@ -1135,6 +1289,34 @@ const deduplicateLeads = (leads: Lead[]): Lead[] => {
     seen.add(lead._id)
     return true
   })
+}
+
+function buildDisplayColumns(visibleColumns: ColumnPref[]): ColumnPref[] {
+  const source =
+    visibleColumns.length > 0
+      ? visibleColumns
+      : DEFAULT_VISIBLE_KEYS.map((key, index) => ({
+          key,
+          name: resolveColumnHeader({ key, name: "" }),
+          visible: true,
+          order: index + 1,
+        }))
+
+  const seen = new Set<string>()
+
+  return [...source]
+    .map((col) => ({
+      ...col,
+      key: normalizeColumnKey(col.key),
+      name: resolveColumnHeader(col),
+    }))
+    .filter((col) => {
+      if (!col.key || seen.has(col.key)) return false
+      seen.add(col.key)
+      return true
+    })
+    .sort((a, b) => a.order - b.order)
+    .slice(0, MAX_VISIBLE_COLUMNS)
 }
 
 function getLeadFieldValue(lead: Lead, key: string): unknown {
@@ -1188,14 +1370,28 @@ export function LeadsTable({
   )
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
   const [isLoading, setIsLoading] = useState(!cachedDefaultLeads)
+  const [isRefetching, setIsRefetching] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false) // Separate state for pagination loading
   const [currentPage, setCurrentPage] = useState(1)
   const [totalCount, setTotalCount] = useState(cachedDefaultLeads?.totalCount ?? 0)
   const [searchCount, setSearchCount] = useState(cachedDefaultLeads?.searchCount ?? 0)
   const [hasMore, setHasMore] = useState(cachedDefaultLeads?.hasMore ?? true)
+
+  useEffect(() => {
+    onTotalCountChange?.(totalCount)
+  }, [totalCount, onTotalCountChange])
+
+  useEffect(() => {
+    onFilteredCountChange?.(searchCount)
+  }, [searchCount, onFilteredCountChange])
   const observerTarget = useRef<HTMLDivElement>(null)
   const isLoadingMoreRef = useRef(false) // Ref to track loading state to prevent duplicate calls
   const leadsDataRef = useRef<Lead[]>(leadsData) // Tracks current rows for spinner decisions
+  const fetchAbortRef = useRef<AbortController | null>(null)
+  const filterSignature = useMemo(
+    () => JSON.stringify(activeCustomFilters),
+    [activeCustomFilters],
+  )
   const { toast } = useToast()
   const [actionDrawerOpen, setActionDrawerOpen] = useState(false)
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
@@ -1227,17 +1423,25 @@ export function LeadsTable({
   const isMobile = useIsMobile()
 
   const displayColumns = useMemo(
-    () =>
-      [...visibleColumns]
-        .map((col) => ({
-          ...col,
-          key: normalizeColumnKey(col.key),
-          name: resolveColumnHeader(col),
-        }))
-        .sort((a, b) => a.order - b.order)
-        .slice(0, MAX_VISIBLE_COLUMNS),
+    () => buildDisplayColumns(visibleColumns),
     [visibleColumns]
   )
+
+  // After a full reload the persisted query cache can hydrate slightly after the
+  // first render. Re-read cached rows so the table is not stuck empty.
+  useEffect(() => {
+    if (leadsData.length > 0) return
+
+    const cached = queryClient.getQueryData<CachedDefaultLeads>(LEADS_DEFAULT_CACHE_KEY)
+    if (!cached?.leads?.length) return
+
+    setLeadsData(cached.leads)
+    setSearchCount(cached.searchCount)
+    setTotalCount(cached.totalCount)
+    setHasMore(cached.hasMore)
+    setCurrentPage(1)
+    setIsLoading(false)
+  }, [leadsData.length, queryClient, visibleColumns.length])
 
   const tableMinWidth = useMemo(() => {
     const dataColumnsWidth = displayColumns.reduce(
@@ -1283,6 +1487,7 @@ export function LeadsTable({
       // Combine both filter types
       const combinedFilters = [...currentFilters, ...currentMetricsFilters];
       const clientSideFilterActive = hasClientSideFilters(combinedFilters)
+      const postEnrichmentFilterActive = hasPostEnrichmentFollowupFilter(combinedFilters)
 
       const token = JSON.parse(localStorage.getItem('map_user') || '{}').access_token;
       if (!token) throw new Error("Token not found");
@@ -1310,8 +1515,13 @@ export function LeadsTable({
           combinedFilters,
         )
         const deduplicatedNewLeads = deduplicateLeads(newLeads)
-        const enrichedNewLeads = await enrichLeadsWithOpenTasks(deduplicatedNewLeads, token)
-        const filteredTotal = clientSideFilterActive
+        const enrichedNewLeads = await enrichLeadsForListView(
+          deduplicatedNewLeads,
+          token,
+          combinedFilters,
+          visibleColumns,
+        )
+        const filteredTotal = clientSideFilterActive || postEnrichmentFilterActive
           ? enrichedNewLeads.length
           : (result.search_count ?? result.total_count ?? 0)
 
@@ -1337,8 +1547,6 @@ export function LeadsTable({
         setCurrentPage(nextPage)
         setSearchCount(result.search_count ?? filteredTotal)
         setTotalCount(result.total_count ?? filteredTotal)
-        onTotalCountChange?.(result.total_count ?? filteredTotal);
-        onFilteredCountChange?.(result.search_count ?? filteredTotal);
       } else {
         setHasMore(false)
       }
@@ -1354,7 +1562,7 @@ export function LeadsTable({
       isLoadingMoreRef.current = false
       setIsLoadingMore(false)
     }
-  }, [currentPage, hasMore, isLoading, isLoadingMore, searchQuery, sortColumn, sortDirection, onTotalCountChange, toast, leadsData.length])
+  }, [currentPage, hasMore, isLoading, isLoadingMore, searchQuery, sortColumn, sortDirection, toast, leadsData.length, visibleColumns])
 
   // Handle column visibility changes
   const handleColumnVisibility = (updater: any) => {
@@ -1366,6 +1574,10 @@ export function LeadsTable({
 
   // Load initial data and handle filter changes
   const fetchLeads = useCallback(async (options?: { force?: boolean }) => {
+    fetchAbortRef.current?.abort()
+    const abortController = new AbortController()
+    fetchAbortRef.current = abortController
+
     try {
       // Skip the network request entirely when we are showing the default
       // view and the cached data is still fresh. This prevents redundant
@@ -1393,16 +1605,17 @@ export function LeadsTable({
           setHasMore(cached.hasMore)
           setCurrentPage(1)
           setIsLoading(false)
-          onTotalCountChange?.(cached.totalCount)
-          onFilteredCountChange?.(cached.searchCount)
+          setIsRefetching(false)
           return
         }
       }
 
-      // Only show the full-screen spinner when there are no rows to display
-      // yet. On a return visit the cached rows are already shown, so we refresh
-      // silently in the background instead of flashing "Loading...".
-      setIsLoading(leadsDataRef.current.length === 0)
+      const hasExistingRows = leadsDataRef.current.length > 0
+      if (hasExistingRows) {
+        setIsRefetching(true)
+      } else {
+        setIsLoading(true)
+      }
       setCurrentPage(1) // Reset to first page
       setHasMore(true) // Reset hasMore flag
 
@@ -1435,15 +1648,15 @@ export function LeadsTable({
       // Combine both filter types
       const combinedFilters = [...currentFilters, ...currentMetricsFilters];
       const clientSideFilterActive = hasClientSideFilters(combinedFilters)
+      const postEnrichmentFilterActive = hasPostEnrichmentFollowupFilter(combinedFilters)
 
-      // When searching or client-side filtering, fetch all results in one request (like filters do) to prevent multiple sequential requests
-      // Otherwise, use pagination for better performance
       const isSearching = searchQuery && searchQuery.trim() !== '';
-      const fetchLength = isSearching || clientSideFilterActive ? 100 : PAGE_SIZE;
+      const fetchLength = getLeadListFetchLength(combinedFilters, Boolean(isSearching));
 
       const response = await fetch(`${URLS.LEAD_LIST}?page=1&length=${fetchLength}&search=${searchQuery}&sort=${sortColumn || ''}&order=${sortDirection}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        signal: abortController.signal,
         body: JSON.stringify({
           draw: 1,
           search: { value: searchQuery, regex: false },
@@ -1456,20 +1669,31 @@ export function LeadsTable({
       }
 
       const result = await parseJsonResponse<{ code?: number; data?: unknown[]; search_count?: number; total_count?: number }>(response);
+      if (abortController.signal.aborted || fetchAbortRef.current !== abortController) return
+
       if (result.code === 200) {
         const fetchedLeads = applyClientSideFilters(
           ((result.data || []) as Lead[]).map(normalizeLead),
           combinedFilters,
         )
         const deduplicatedLeads = deduplicateLeads(fetchedLeads)
-        const enrichedLeads = await enrichLeadsWithOpenTasks(deduplicatedLeads, token)
-        const filteredTotal = clientSideFilterActive
+        const enrichedLeads = await enrichLeadsForListView(
+          deduplicatedLeads,
+          token,
+          combinedFilters,
+          visibleColumns,
+          abortController.signal,
+        )
+        if (abortController.signal.aborted || fetchAbortRef.current !== abortController) return
+
+        const usesLocalCount = clientSideFilterActive || postEnrichmentFilterActive
+        const filteredTotal = usesLocalCount
           ? enrichedLeads.length
           : (result.search_count ?? result.total_count ?? enrichedLeads.length)
 
-        const nextSearchCount = clientSideFilterActive ? enrichedLeads.length : (result.search_count ?? filteredTotal)
+        const nextSearchCount = usesLocalCount ? enrichedLeads.length : (result.search_count ?? filteredTotal)
         const nextTotalCount = result.total_count ?? filteredTotal
-        const nextHasMore = isSearching || clientSideFilterActive
+        const nextHasMore = shouldDisablePagination(combinedFilters, Boolean(isSearching))
           ? false
           : enrichedLeads.length < filteredTotal
 
@@ -1497,15 +1721,15 @@ export function LeadsTable({
           })
         }
 
-        onTotalCountChange?.(result.total_count ?? filteredTotal);
-        onFilteredCountChange?.(clientSideFilterActive ? enrichedLeads.length : (result.search_count ?? filteredTotal));
-        onMetricsRefresh?.();
       } else {
         setHasMore(false)
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return
       console.error('Error fetching data:', error);
-      setLeadsData([]);
+      if (leadsDataRef.current.length === 0) {
+        setLeadsData([]);
+      }
       setHasMore(false);
       toast({
         title: "Error",
@@ -1513,9 +1737,12 @@ export function LeadsTable({
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (fetchAbortRef.current === abortController) {
+        setIsLoading(false)
+        setIsRefetching(false)
+      }
     }
-  }, [searchQuery, activeCustomFilters, sortColumn, sortDirection, activeMetricFilter, onTotalCountChange, onFilteredCountChange, onMetricsRefresh, toast, queryClient]);
+  }, [searchQuery, filterSignature, sortColumn, sortDirection, activeMetricFilter, toast, queryClient, visibleColumns]);
 
   // Load initial data and handle filter changes. A change in `refreshKey`
   // (e.g. after adding a lead) forces a fresh fetch that bypasses the cache.
@@ -1540,16 +1767,8 @@ export function LeadsTable({
       if (prev.some((lead) => lead._id === normalized._id)) return prev
       return [normalized, ...prev]
     })
-    setTotalCount((count) => {
-      const next = count + 1
-      onTotalCountChange?.(next)
-      return next
-    })
-    setSearchCount((count) => {
-      const next = count + 1
-      onFilteredCountChange?.(next)
-      return next
-    })
+    setTotalCount((count) => count + 1)
+    setSearchCount((count) => count + 1)
 
     const cached = queryClient.getQueryData<CachedDefaultLeads>(LEADS_DEFAULT_CACHE_KEY)
     if (cached) {
@@ -1563,7 +1782,7 @@ export function LeadsTable({
     }
 
     onPrependLeadHandled?.()
-  }, [prependLeadRequest, onPrependLeadHandled, onTotalCountChange, onFilteredCountChange, queryClient])
+  }, [prependLeadRequest, onPrependLeadHandled, queryClient])
 
   useEffect(() => {
     const fetchDropdownOptions = async () => {
@@ -2045,16 +2264,8 @@ export function LeadsTable({
         });
 
         setLeadsData(prevLeads => prevLeads.filter(l => l._id !== leadToDelete._id));
-        setTotalCount(prev => {
-          const newTotal = prev - 1;
-          onTotalCountChange?.(newTotal);
-          return newTotal;
-        });
-        setSearchCount(prev => {
-          const newCount = prev - 1;
-          onFilteredCountChange?.(newCount);
-          return newCount;
-        });
+        setTotalCount(prev => prev - 1);
+        setSearchCount(prev => prev - 1);
 
         setDeleteDialogOpen(false);
         setLeadToDelete(null);
@@ -2291,7 +2502,7 @@ export function LeadsTable({
 
   // Mobile card view renderer
   const renderMobileCard = (lead: Lead) => (
-    <Card key={lead._id} className="mb-3 shadow-sm hover:shadow-md transition-shadow">
+    <Card key={lead._id} className="w-full shadow-sm transition-shadow hover:shadow-md">
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <div className="flex-1 min-w-0">
@@ -2599,6 +2810,14 @@ export function LeadsTable({
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col" ref={tableRef}>
+      {isRefetching && leadsData.length > 0 && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-start justify-center bg-background/40 pt-16 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
+            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            Updating results...
+          </div>
+        </div>
+      )}
       {renderSendEmail()}
       {selectedLead && (
         <>
@@ -2633,13 +2852,13 @@ export function LeadsTable({
       )}
       {/* Mobile Card View */}
       {isMobile ? (
-        <div className="space-y-0">
+        <div className="space-y-3">
           {isLoading && leadsData.length === 0 ? (
             <div className="py-10 text-center">
               <LoadingSpinner />
             </div>
           ) : leadsData.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-muted-foreground">
               No leads found for the selected filters.
             </div>
           ) : (

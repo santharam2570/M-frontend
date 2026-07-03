@@ -1,13 +1,18 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
-import { LayoutGrid } from "lucide-react"
+import { useState } from "react"
+import { LayoutGrid, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useToast } from "@/hooks/use-toast"
 import URLS from "@/config/urls"
 import { parseJsonResponse } from "@/lib/api"
+import { themeFilterCountBadgeClassName } from "@/lib/form-field-styles"
+import { cn } from "@/lib/utils"
 
 export type ColumnPref = {
   key: string
@@ -482,21 +487,8 @@ export function ColumnsDropdown({
 }: ColumnsDropdownProps) {
   const isMobile = useIsMobile()
   const [isOpen, setIsOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [searchQuery, setSearchQuery] = useState("")
   const { toast } = useToast()
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside)
-    }
-  }, [])
 
   const handleColumnToggle = async (columnKey: string) => {
     const normalizedKey = normalizeColumnKey(columnKey)
@@ -588,91 +580,160 @@ export function ColumnsDropdown({
       name: resolveColumnHeader(col),
     }))
     .sort((a, b) => a.order - b.order)
+
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const matchesSearch = (column: ColumnPref) => {
+    if (!normalizedSearch) return true
+    const label = (column.name || resolveColumnHeader(column)).toLowerCase()
+    return label.includes(normalizedSearch) || column.key.toLowerCase().includes(normalizedSearch)
+  }
+
   const visibleOrderedColumns = orderedColumns.filter((col) => col.visible)
   const hiddenOrderedColumns = orderedColumns.filter((col) => !col.visible)
+  const filteredVisibleColumns = visibleOrderedColumns.filter(matchesSearch)
+  const filteredHiddenColumns = hiddenOrderedColumns.filter(matchesSearch)
+  const visibleCount = visibleOrderedColumns.length
+  const atColumnLimit = visibleCount >= MAX_VISIBLE_COLUMNS
+  const hasFilteredResults = filteredVisibleColumns.length > 0 || filteredHiddenColumns.length > 0
 
   const renderColumnItem = (column: ColumnPref, orderIndex?: number) => {
     const label = column.name || resolveColumnHeader(column)
+    const checked = isColumnVisible(column.key)
+    const isDisabled = !checked && atColumnLimit
 
     return (
-      <div
+      <button
         key={column.key}
-        role="button"
-        tabIndex={0}
-        className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-accent hover:text-accent-foreground rounded-sm"
+        type="button"
+        disabled={isDisabled}
+        className={cn(
+          "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
+          "hover:bg-accent hover:text-accent-foreground",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+          isDisabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-inherit"
+        )}
         onClick={() => handleColumnToggle(column.key)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault()
-            handleColumnToggle(column.key)
-          }
-        }}
       >
-        <Checkbox checked={isColumnVisible(column.key)} className="pointer-events-none" />
-        <span className="flex-1 min-w-0 text-sm text-popover-foreground">
-          {orderIndex != null ? (
-            <span className="tabular-nums text-muted-foreground mr-1.5">{orderIndex}.</span>
-          ) : null}
-          <span className="break-words">{label}</span>
-        </span>
+        <Checkbox checked={checked} className="pointer-events-none" aria-hidden />
+        {orderIndex != null ? (
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-medium tabular-nums text-muted-foreground">
+            {orderIndex}
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 break-words leading-snug">{label}</span>
+      </button>
+    )
+  }
+
+  const renderColumnSection = (
+    title: string,
+    columns: ColumnPref[],
+    options?: { showOrder?: boolean }
+  ) => {
+    if (columns.length === 0) return null
+
+    return (
+      <div className="space-y-0.5">
+        <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {title} ({columns.length})
+        </p>
+        {columns.map((column, index) =>
+          renderColumnItem(column, options?.showOrder ? index + 1 : undefined)
+        )}
       </div>
     )
   }
 
   return (
-    <div className="relative inline-flex" ref={dropdownRef}>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-8 px-2 text-xs gap-1"
-        onClick={() => setIsOpen(!isOpen)}
-      >
-        <LayoutGrid className="h-3 w-3" />
-        {!isMobile && "Columns"}
-      </Button>
+    <Popover
+      open={isOpen}
+      onOpenChange={(open) => {
+        setIsOpen(open)
+        if (!open) setSearchQuery("")
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1.5 px-3 text-xs">
+          <LayoutGrid className="h-3.5 w-3.5" />
+          {!isMobile && "Columns"}
+          {visibleCount > 0 && (
+            <span
+              className={cn(
+                themeFilterCountBadgeClassName,
+                "ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1"
+              )}
+            >
+              {visibleCount}
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
 
-      {isOpen && (
-        <div className="absolute right-0 z-50 mt-1 w-64 rounded-md border bg-popover p-1 shadow-md animate-in fade-in-80">
-          <div className="px-2 py-1.5 text-sm font-semibold">
-            Toggle Columns
-            <span className="ml-1 text-xs font-normal text-muted-foreground">
-              ({visibleOrderedColumns.length}/{MAX_VISIBLE_COLUMNS} visible)
+      <PopoverContent className="w-72 p-0" align="end" sideOffset={6}>
+        <div className="border-b px-3 py-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-semibold leading-none">Toggle Columns</h4>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Choose up to {MAX_VISIBLE_COLUMNS} columns for the table
+              </p>
+            </div>
+            <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+              {visibleCount}/{MAX_VISIBLE_COLUMNS}
             </span>
           </div>
-          <div className="h-px bg-border mx-1 my-1" />
-          <div className="max-h-[300px] overflow-y-auto py-1">
-            {isLoading ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading columns...</div>
-            ) : orderedColumns.length > 0 ? (
-              <>
-                {visibleOrderedColumns.length > 0 && (
-                  <>
-                    <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">
-                      Visible ({visibleOrderedColumns.length})
-                    </div>
-                    {visibleOrderedColumns.map((column, index) =>
-                      renderColumnItem(column, index + 1)
-                    )}
-                  </>
-                )}
-                {hiddenOrderedColumns.length > 0 && (
-                  <>
-                    {visibleOrderedColumns.length > 0 && (
-                      <div className="h-px bg-border mx-1 my-1" />
-                    )}
-                    <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">
-                      Hidden ({hiddenOrderedColumns.length})
-                    </div>
-                    {hiddenOrderedColumns.map((column) => renderColumnItem(column))}
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">No columns available</div>
-            )}
+
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-all duration-200"
+              style={{ width: `${Math.min((visibleCount / MAX_VISIBLE_COLUMNS) * 100, 100)}%` }}
+            />
+          </div>
+
+          <div className="relative mt-3">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search columns..."
+              className="h-8 pl-8 text-sm"
+              aria-label="Search columns"
+            />
           </div>
         </div>
-      )}
-    </div>
+
+        <ScrollArea className="max-h-[min(320px,50vh)]">
+          <div className="px-1 py-1">
+            {isLoading ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                Loading columns...
+              </div>
+            ) : orderedColumns.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                No columns available
+              </div>
+            ) : !hasFilteredResults ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                No columns match &quot;{searchQuery.trim()}&quot;
+              </div>
+            ) : (
+              <>
+                {renderColumnSection("Visible", filteredVisibleColumns, { showOrder: true })}
+                {filteredVisibleColumns.length > 0 && filteredHiddenColumns.length > 0 && (
+                  <div className="mx-2 my-1 h-px bg-border" />
+                )}
+                {renderColumnSection("Hidden", filteredHiddenColumns)}
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        {atColumnLimit && (
+          <div className="border-t px-3 py-2 text-xs text-muted-foreground">
+            Column limit reached. Hide a column to show another.
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }

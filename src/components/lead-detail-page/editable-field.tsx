@@ -44,6 +44,26 @@ function formatDateDisplay(dateStr: string): string {
   return format(parsed, "PPP")
 }
 
+function formatDobInput(input: string): string {
+  const digits = input.replace(/\D/g, "").slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return `${digits.slice(0, 2)}-${digits.slice(2)}`
+  return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`
+}
+
+function formatDobDisplay(dateStr: string): string {
+  if (!dateStr?.trim()) return ""
+  const trimmed = dateStr.trim()
+  if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return trimmed
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+    const [day, month, year] = trimmed.split("/")
+    return `${day}-${month}-${year}`
+  }
+  const parsed = parseDateValue(trimmed)
+  if (parsed) return format(parsed, "dd-MM-yyyy")
+  return trimmed
+}
+
 interface EditableFieldProps {
   field: string
   value: string
@@ -105,9 +125,9 @@ export function EditableField({
   }, [isEditing, isTextarea, options])
 
   useEffect(() => {
-    setEditValue(value)
+    setEditValue(type === "dob" ? formatDobDisplay(value) : value)
     setEditMultiValue(parseMultiValue(value))
-  }, [value])
+  }, [value, type])
 
   const handleSave = () => {
     const valueToSave = isMultiSelect ? editMultiValue.join(", ") : editValue
@@ -117,7 +137,7 @@ export function EditableField({
   }
 
   const handleCancel = () => {
-    setEditValue(value)
+    setEditValue(type === "dob" ? formatDobDisplay(value) : value)
     setEditMultiValue(parseMultiValue(value))
     setIsEditing(false)
     setIsDropdownOpen(false)
@@ -145,6 +165,8 @@ export function EditableField({
       if (pincodeRegex.test(inputValue) || inputValue === '') {
         setEditValue(inputValue)
       }
+    } else if (type === 'dob') {
+      setEditValue(formatDobInput(inputValue))
     } else {
       setEditValue(inputValue)
     }
@@ -182,7 +204,9 @@ export function EditableField({
     ? options.find((opt) => opt.value === value)?.label || value
     : type === "date" && value?.trim()
       ? formatDateDisplay(value)
-      : displayValue
+      : type === "dob" && value?.trim()
+        ? formatDobDisplay(value)
+        : displayValue
   const formattedDisplayValue = resolvedDisplayValue?.trim() ? resolvedDisplayValue : "—"
 
   const labelClassName =
@@ -312,6 +336,17 @@ export function EditableField({
             </PopoverContent>
           </Popover>
         </div>
+      ) : type === "dob" ? (
+        <Input
+          ref={inputRef}
+          value={editValue}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
+          placeholder="DD-MM-YYYY"
+          className={cn(variant === "detail" ? cn(leadDetailSidebarInputClassName, "mt-1.5") : cn("text-sm", leadDetailInlineFieldClassName, "p-1"))}
+          type="text"
+          inputMode="numeric"
+        />
       ) : type === "checkbox" ? (
         <div className="flex items-center gap-2 mt-1.5">
           <input
@@ -364,7 +399,7 @@ export function EditableField({
         className={cn(
           "shrink-0 text-slate-400 hover:text-slate-700",
           variant === "detail" ? "h-7 w-7" : "h-6 w-6 ml-1",
-          isHovering ? "opacity-100" : "opacity-0",
+          "opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
         )}
         onClick={() => setIsEditing(true)}
       >

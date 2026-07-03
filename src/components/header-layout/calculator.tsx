@@ -90,7 +90,7 @@ export function Calculator({ onClose }: CalculatorProps) {
   }
 
   return (
-    <div className="fixed right-4 top-16 z-40 w-64 bg-gray-900 rounded-lg shadow-xl border border-gray-800 overflow-hidden">
+    <div className="fixed inset-x-4 top-16 z-40 mx-auto max-w-xs rounded-lg border border-gray-800 bg-gray-900 shadow-xl overflow-hidden sm:inset-x-auto sm:right-4 sm:mx-0 sm:w-64">
       <div className="flex items-center justify-between p-2 bg-gray-800">
         <h3 className="text-sm font-medium text-white">Calculator</h3>
         <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-white" onClick={onClose}>

@@ -46,10 +46,30 @@ function normalizeTaskType(type: string): string {
   }
 }
 
+function resolveTaskType(type: string | null | undefined, title: string): string {
+  if (type?.trim()) return normalizeTaskType(type)
+  return resolveTaskTypeFromTitle(title) || ""
+}
+
+function getTaskTypeDotColor(type: string | null | undefined, title: string): string {
+  switch (resolveTaskType(type, title)) {
+    case "Email":
+      return "bg-blue-600"
+    case "Call":
+      return "bg-green-600"
+    case "WhatsApp":
+      return "bg-[#25D366]"
+    case "Meeting":
+      return "bg-purple-600"
+    case "Visit":
+      return "bg-orange-600"
+    default:
+      return "bg-muted-foreground"
+  }
+}
+
 function getTaskIcon(type: string | null | undefined, title: string) {
-  const resolvedType = type?.trim()
-    ? normalizeTaskType(type)
-    : resolveTaskTypeFromTitle(title) || ""
+  const resolvedType = resolveTaskType(type, title)
 
   switch (resolvedType) {
     case "Email":
@@ -70,7 +90,6 @@ function getTaskIcon(type: string | null | undefined, title: string) {
 export function TaskItem({ task, showTime = false }: TaskItemProps) {
   const router = useRouter()
   const taskDate = new Date(task.date)
-
   const formatTime = () => {
     if (task.time) {
       const timeStr = task.time.trim()
@@ -104,25 +123,6 @@ export function TaskItem({ task, showTime = false }: TaskItemProps) {
       return "bg-gray-100 border-gray-300 text-gray-800"
     }
     return ""
-  }
-
-  const getCategoryColor = () => {
-    switch (task.category) {
-      case "Companies":
-      case "company":
-        return "bg-purple-500"
-      case "Leads":
-      case "lead":
-        return "bg-yellow-500"
-      case "Opportunities":
-      case "opportunity":
-        return "bg-green-500"
-      case "Projects":
-      case "project":
-        return "bg-blue-500"
-      default:
-        return "bg-gray-500"
-    }
   }
 
   const resolveTaskUrl = () => {
@@ -161,7 +161,7 @@ export function TaskItem({ task, showTime = false }: TaskItemProps) {
 
       <div className="mb-1 flex items-center justify-between">
         <div className="flex items-center gap-1">
-          <div className={cn("h-2 w-2 rounded-full", getCategoryColor())} />
+          <div className={cn("h-2 w-2 rounded-full", getTaskTypeDotColor(task.type, task.title))} />
           {task.category && (
             <span className="text-[10px] text-muted-foreground capitalize">{task.category}</span>
           )}

@@ -61,8 +61,8 @@ export function LeadsContent() {
   const [search, setSearch] = useState("")
   const [searchQuery, setSearchQuery] = useState("") // Actual search query sent to API
   const [totalLeads, setTotalLeads] = useState(0)
-  const [visibleColumns, setVisibleColumns] = useState<ColumnPref[]>([])
-  const [allColumns, setAllColumns] = useState<ColumnPref[]>([])
+  const [visibleColumnsOverride, setVisibleColumnsOverride] = useState<ColumnPref[] | null>(null)
+  const [allColumnsOverride, setAllColumnsOverride] = useState<ColumnPref[] | null>(null)
   const [activeFilter, setActiveFilter] = useState<string | null>(null)
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
   const [leadFormOpen, setLeadFormOpen] = useState(false)
@@ -117,6 +117,7 @@ export function LeadsContent() {
     queryKey: ["lead-metrics"],
     enabled: !!token,
     queryFn: () => fetchLeadMetrics(token, 7),
+    staleTime: 5 * 60 * 1000,
   })
 
   // Column configuration is also cached; falls back to a default config on error.
@@ -134,6 +135,8 @@ export function LeadsContent() {
   })
 
   const columnsLoaded = !!columnConfig
+  const visibleColumns = visibleColumnsOverride ?? columnConfig?.visibleColumns ?? []
+  const allColumns = allColumnsOverride ?? columnConfig?.modalColumns ?? []
 
   useEffect(() => {
     try {
@@ -149,13 +152,6 @@ export function LeadsContent() {
       router.push('/login');
     }
   }, []);
-
-  useEffect(() => {
-    if (columnConfig) {
-      setVisibleColumns(columnConfig.visibleColumns)
-      setAllColumns(columnConfig.modalColumns)
-    }
-  }, [columnConfig])
 
   // Default view: show active leads without a lead_status ObjectId filter.
   // The API already scopes results to status=active; filtering by lead_status
@@ -289,11 +285,6 @@ export function LeadsContent() {
         setActiveMetricFilter(null)
         localStorage.setItem("current_filters", JSON.stringify(filterArray))
         setActiveCustomFilters(filterState)
-
-        toast({
-          title: "Filters Applied",
-          description: "Custom filters have been applied.",
-        })
       } catch (error) {
         console.error("Error applying filters:", getApiErrorMessage(error))
         toast({
@@ -339,10 +330,6 @@ export function LeadsContent() {
       try {
         if (activeMetricFilter === metricType) {
           setDefaultStatusFilter()
-          toast({
-            title: "Filter Reset",
-            description: "Reset to Active status (default)",
-          })
           return
         }
 
@@ -374,23 +361,25 @@ export function LeadsContent() {
             break
           case "followup-today":
             metricsFilter = [{
-              field: "today_followup",
+              field: "followup_today",
               indictor: "is",
               field_orgin: "default",
               selected_values: ["true"],
             }]
             break
+          case "followups-this-week":
+          case "this-week":
+            metricsFilter = [{
+              field: "followup_this_week",
+              indictor: "is",
+              field_orgin: "default",
+              selected_values: ["true"],
+            }]
+            break
+          case "pending-followups":
           case "overdue":
             metricsFilter = [{
               field: "overdue_followup",
-              indictor: "is",
-              field_orgin: "default",
-              selected_values: ["true"],
-            }]
-            break
-          case "this-week":
-            metricsFilter = [{
-              field: "created_this_week",
               indictor: "is",
               field_orgin: "default",
               selected_values: ["true"],
@@ -418,11 +407,6 @@ export function LeadsContent() {
 
         setActiveMetricsFilters(metricsFilter)
         localStorage.setItem("current_lead_metrics_filters", JSON.stringify(metricsFilter))
-
-        toast({
-          title: "Filter Applied",
-          description: `Filtering by ${metricType.replace("-", " ")}`,
-        })
       } catch (error) {
         console.error("Error applying metric filter:", getApiErrorMessage(error))
         toast({
@@ -440,12 +424,25 @@ export function LeadsContent() {
     hasActiveMetricsFilter
 
   const handleVisibleColumnsChange = useCallback((columns: ColumnPref[]) => {
-    setVisibleColumns(columns)
-  }, [])
+    setVisibleColumnsOverride(columns)
+    queryClient.setQueryData(["lead-columns"], (current) => ({
+      ...(current ?? buildFallbackConfig()),
+      visibleColumns: columns,
+    }))
+  }, [queryClient])
 
   const handleAllColumnsChange = useCallback((columns: ColumnPref[]) => {
-    setAllColumns(columns)
-  }, [])
+    setAllColumnsOverride(columns)
+    const nextVisibleColumns = columns
+      .filter((col) => col.visible)
+      .sort((a, b) => a.order - b.order)
+
+    queryClient.setQueryData(["lead-columns"], (current) => ({
+      ...(current ?? buildFallbackConfig()),
+      visibleColumns: nextVisibleColumns,
+      modalColumns: columns,
+    }))
+  }, [queryClient])
 
   // Handle filter change
   const handleFilterChange = useCallback(
@@ -475,71 +472,93 @@ export function LeadsContent() {
     ? filteredCount
     : totalLeads
 
+  const leadsTableContent = columnsLoaded ? (
+    <LeadsTable
+      searchQuery={searchQuery}
+      visibleColumns={visibleColumns}
+      activeFilter={activeFilter}
+      customFilters={customFilters}
+      activeCustomFilters={activeCustomFilters}
+      activeMetricFilter={activeMetricFilter}
+      refreshKey={refreshKey}
+      prependLeadRequest={prependLeadRequest}
+      onPrependLeadHandled={() => setPrependLeadRequest(null)}
+      onTotalCountChange={setTotalLeads}
+      onFilteredCountChange={setFilteredCount}
+      onMetricsRefresh={() => {
+        void refetchMetrics()
+      }}
+    />
+  ) : (
+    <div className="flex items-center justify-center py-20">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        <span className="text-sm">Loading columns...</span>
+      </div>
+    </div>
+  )
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2 pt-0">
-        <div className="shrink-0 px-3 pt-4 pb-1">
-          <LeadsSummary
-            onFilterByMetric={handleFilterByMetric}
-            activeMetricFilter={activeMetricFilter}
-            metrics={leadMetrics}
-            isLoading={isMetricsLoading}
-          />
-        </div>
+      <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 pt-0">
+        <LeadsSummary
+          onFilterByMetric={handleFilterByMetric}
+          activeMetricFilter={activeMetricFilter}
+          metrics={leadMetrics}
+          isLoading={isMetricsLoading}
+        />
 
-        <div className="mb-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-x-8 gap-y-3 px-3">
-          <div className="flex min-w-0 items-center gap-5">
-            <div className="relative w-[220px] shrink-0 sm:w-[240px]">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search leads..."
-                  className={`h-8 py-1 pl-8 text-sm transition-all ${
-                    search ? "pr-20" : "pr-3"
-                  }`}
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyPress={handleSearchKeyPress}
-                />
-                {search && (
-                  <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 w-6 p-1"
-                            onClick={handleSearch}
-                          >
-                            <Check className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Search</p>
-                        </TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={handleClearSearch}
-                            className="flex h-6 w-6 items-center justify-center rounded-full p-1 transition-colors hover:bg-accent"
-                            aria-label="Clear search"
-                          >
-                            <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Clear Search</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                )}
-              </div>
+        <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <div className="relative w-full min-w-0 sm:w-[220px] sm:shrink-0 md:w-[260px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search leads..."
+                className={`h-8 py-1 pl-8 text-sm transition-all ${
+                  search ? "pr-20" : "pr-3"
+                }`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyPress={handleSearchKeyPress}
+              />
+              {search && (
+                <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-1"
+                          onClick={handleSearch}
+                        >
+                          <Check className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Search</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={handleClearSearch}
+                          className="flex h-6 w-6 items-center justify-center rounded-full p-1 transition-colors hover:bg-accent"
+                          aria-label="Clear search"
+                        >
+                          <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Clear Search</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              )}
             </div>
 
-            <p className="shrink-0 text-sm text-muted-foreground whitespace-nowrap">
+            <p className="flex h-8 shrink-0 items-center text-sm text-muted-foreground sm:whitespace-nowrap">
               {searchQuery ? (
                 <span>
                   Search Results: <span className="font-medium text-foreground">{filteredCount}</span>
@@ -558,7 +577,7 @@ export function LeadsContent() {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex shrink-0 flex-nowrap items-center justify-start gap-2 sm:justify-end">
             <ColumnsDropdown
               visibleColumns={visibleColumns}
               allColumns={allColumns}
@@ -566,14 +585,14 @@ export function LeadsContent() {
               onAllColumnsChange={handleAllColumnsChange}
               isLoading={!columnsLoaded}
             />
-            <div className="relative inline-flex">
+            <div className="relative inline-flex shrink-0">
               <Button
                 variant="outline"
                 size="sm"
-                className={`h-8 text-xs gap-1 ${hasActiveCustomFilters ? "pr-7 bg-muted" : "px-2"}`}
+                className={`h-8 shrink-0 gap-1.5 text-xs ${hasActiveCustomFilters ? "bg-muted pr-7" : "px-3"}`}
                 onClick={() => setFilterDrawerOpen(true)}
               >
-                <FilterIcon className="h-3 w-3" />
+                <FilterIcon className="h-3.5 w-3.5" />
                 Filters
                 {hasActiveCustomFilters && (
                   <span className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-[10px] font-medium text-primary">
@@ -592,48 +611,30 @@ export function LeadsContent() {
               )}
             </div>
             <Button
-                size="sm"
-                className="h-8 px-3 text-xs gap-1"
-                onClick={() => setLeadFormOpen(true)}
-              >
-                <Plus className="h-3 w-3" />
-                {!isMobile && "Add Lead "}
-                {isMobile && "Add"}
-              </Button>
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 px-3 text-xs"
+              onClick={() => setLeadFormOpen(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {!isMobile && "Add Lead"}
+              {isMobile && "Add"}
+            </Button>
           </div>
         </div>
 
-        <Card className="mx-3 mt-2 flex min-h-0 flex-1 flex-col gap-0 overflow-hidden py-0">
-          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              {columnsLoaded ? (
-                <LeadsTable
-                  searchQuery={searchQuery}
-                  visibleColumns={visibleColumns}
-                  activeFilter={activeFilter}
-                  customFilters={customFilters}
-                  activeCustomFilters={activeCustomFilters}
-                  activeMetricFilter={activeMetricFilter}
-                  refreshKey={refreshKey}
-                  prependLeadRequest={prependLeadRequest}
-                  onPrependLeadHandled={() => setPrependLeadRequest(null)}
-                  onTotalCountChange={setTotalLeads}
-                  onFilteredCountChange={setFilteredCount}
-                  onMetricsRefresh={() => {
-                    void refetchMetrics()
-                  }}
-                />
-              ) : (
-                <div className="flex items-center justify-center py-20">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                    <span className="text-sm">Loading columns...</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {isMobile ? (
+          <div className="min-h-0 flex-1 overflow-auto pb-4">
+            {leadsTableContent}
+          </div>
+        ) : (
+          <Card className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden py-0">
+            <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {leadsTableContent}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
       </main>
 

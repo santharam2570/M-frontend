@@ -12,7 +12,9 @@ export default function SettingsLayout({
     <SidebarProvider>
       <TooltipProvider delayDuration={0}>
         <SettingsSidebar />
-        <SidebarInset>{children}</SidebarInset>
+        <SidebarInset className="min-w-0 overflow-x-hidden">
+          <div className="flex min-h-svh w-full min-w-0 flex-col">{children}</div>
+        </SidebarInset>
       </TooltipProvider>
       <Toaster />
     </SidebarProvider>

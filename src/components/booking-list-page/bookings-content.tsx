@@ -23,13 +23,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { isBookingStatus, getStatusLabel } from "@/components/project-detail-page/units/unit-utils"
 import { BASE_URL } from "@/config/environment"
 import URLS from "@/config/urls"
 import { getApiErrorMessage, parseJsonResponse } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import {
+  fetchProjectUnits,
+  fetchUnitStatusOptionsApi,
+  type ProjectSettingOption,
+} from "@/lib/projects/project-api"
+import type { ProjectUnit } from "@/lib/projects/types"
 
 const PROJECT_BOOKING_UNITS_URL = `${BASE_URL}/project_booking_units`
-const BOOKING_STATUS = "booking"
 
 type RawRecord = Record<string, unknown>
 
@@ -64,22 +70,27 @@ function toNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function resolveStatusName(value: unknown): string {
+function resolveRawStatus(value: unknown): string {
   if (value == null) return ""
-  if (typeof value === "string") return value
-  if (typeof value === "object" && value !== null && "name" in value) {
-    return String((value as { name?: unknown }).name ?? "")
+  if (typeof value === "string" || typeof value === "number") return String(value)
+  if (typeof value === "object" && value !== null) {
+    if ("name" in value && typeof (value as { name?: unknown }).name === "string") {
+      const name = String((value as { name: string }).name)
+      if (name) return name
+    }
+    return resolveId((value as RawRecord)._id ?? (value as RawRecord).id ?? value)
   }
   return ""
 }
 
-function isBookingStatus(status: string): boolean {
-  const normalized = status.toLowerCase().trim()
-  return normalized === BOOKING_STATUS || normalized === "booked"
-}
-
-function normalizeBookingUnit(raw: RawRecord, projectId: string, projectName: string): BookingUnitRow {
-  const status = resolveStatusName(raw.status)
+function normalizeBookingUnit(
+  raw: RawRecord,
+  projectId: string,
+  projectName: string,
+  statusOptions: ProjectSettingOption[],
+  rawStatus?: string,
+): BookingUnitRow {
+  const status = getStatusLabel(rawStatus ?? resolveRawStatus(raw.status), statusOptions)
 
   return {
     _id: resolveId(raw._id ?? raw.id),
@@ -132,24 +143,50 @@ async function fetchProjectOptions(token: string): Promise<ProjectOption[]> {
     .filter((project) => project._id)
 }
 
+function normalizeProjectUnitToBookingRow(
+  unit: ProjectUnit,
+  projectId: string,
+  projectName: string,
+  statusOptions: ProjectSettingOption[],
+): BookingUnitRow {
+  return {
+    _id: unit._id,
+    project_id: projectId,
+    project_name: projectName,
+    unit_no: unit.unit_no,
+    block: unit.block,
+    property_type: unit.property_type,
+    area_sqft: unit.area_sqft,
+    area_cents: unit.area_cents,
+    price_per_sqft: unit.price_per_sqft,
+    total_price: unit.total_price,
+    status: getStatusLabel(unit.status, statusOptions),
+    customer_name: unit.linked_lead_name,
+  }
+}
+
 async function fetchBookingUnitsForProject(
   projectId: string,
   projectName: string,
   token: string,
+  statusOptions: ProjectSettingOption[],
 ): Promise<BookingUnitRow[]> {
-  const response = await fetch(`${PROJECT_BOOKING_UNITS_URL}/${projectId}`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  })
+  const [bookingResponse, projectUnits] = await Promise.all([
+    fetch(`${PROJECT_BOOKING_UNITS_URL}/${projectId}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    }),
+    fetchProjectUnits(projectId, token),
+  ])
 
   const payload = await parseJsonResponse<{
     code?: number
     msg?: string
     data?: unknown
-  }>(response)
+  }>(bookingResponse)
 
   if (payload.code !== 200) {
     throw new Error(payload.msg || "Failed to load booking units.")
@@ -157,10 +194,24 @@ async function fetchBookingUnitsForProject(
 
   const items = Array.isArray(payload.data) ? payload.data : []
 
-  return items
+  const fromBookingApi = items
     .filter((item): item is RawRecord => typeof item === "object" && item !== null)
-    .map((item) => normalizeBookingUnit(item, projectId, projectName))
-    .filter((unit) => isBookingStatus(unit.status))
+    .map((item) => {
+      const rawStatus = resolveRawStatus(item.status)
+      return { item, rawStatus }
+    })
+    .filter(({ rawStatus }) => isBookingStatus(rawStatus, statusOptions))
+    .map(({ item, rawStatus }) =>
+      normalizeBookingUnit(item, projectId, projectName, statusOptions, rawStatus),
+    )
+
+  const existingIds = new Set(fromBookingApi.map((unit) => unit._id))
+  const fromProjectUnits = projectUnits
+    .filter((unit) => isBookingStatus(unit.status, statusOptions))
+    .filter((unit) => !existingIds.has(unit._id))
+    .map((unit) => normalizeProjectUnitToBookingRow(unit, projectId, projectName, statusOptions))
+
+  return [...fromBookingApi, ...fromProjectUnits]
 }
 
 async function deleteBookingForUnit(
@@ -216,6 +267,7 @@ export function BookingsContent() {
 
   const projectId = searchParams.get("projectId")
   const unitId = searchParams.get("unitId")
+  const isDetailView = Boolean(projectId && unitId)
   const hasFilters = Boolean(projectId || unitId)
 
   const queryClient = useQueryClient()
@@ -272,22 +324,26 @@ export function BookingsContent() {
     error: bookingUnitsError,
   } = useQuery({
     queryKey: ["booking-units", projectId, unitId],
-    enabled: hasToken,
+    // Detail view loads its own data; skip the expensive per-project list fetch.
+    enabled: hasToken && !isDetailView,
     queryFn: async (): Promise<BookingUnitRow[]> => {
       const token = getAuthToken()
       if (!token) return []
 
-      const projects = await fetchProjectOptions(token)
+      const [projects, statusOptions] = await Promise.all([
+        fetchProjectOptions(token),
+        fetchUnitStatusOptionsApi(token),
+      ])
       let rows: BookingUnitRow[] = []
 
       if (projectId) {
         const projectName =
           projects.find((project) => project._id === projectId)?.name ?? "Selected project"
-        rows = await fetchBookingUnitsForProject(projectId, projectName, token)
+        rows = await fetchBookingUnitsForProject(projectId, projectName, token, statusOptions)
       } else {
         const projectResults = await Promise.all(
           projects.map((project) =>
-            fetchBookingUnitsForProject(project._id, project.name, token),
+            fetchBookingUnitsForProject(project._id, project.name, token, statusOptions),
           ),
         )
         rows = projectResults.flat()
@@ -310,6 +366,7 @@ export function BookingsContent() {
   const refreshBookings = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["booking-units"] })
     void queryClient.invalidateQueries({ queryKey: ["booking-metrics"] })
+    void queryClient.invalidateQueries({ queryKey: ["booking-detail-snapshot"] })
   }, [queryClient])
 
   const bookings = useMemo(
@@ -457,19 +514,17 @@ export function BookingsContent() {
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2 pt-0">
-        <div className="shrink-0 px-3 pb-1 pt-4">
-          <BookingsSummary
-            onFilterByMetric={handleFilterByMetric}
-            activeMetricFilter={activeMetricFilter}
-            metrics={bookingMetrics}
-            isLoading={isMetricsLoading}
-          />
-        </div>
+      <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 pt-0">
+        <BookingsSummary
+          onFilterByMetric={handleFilterByMetric}
+          activeMetricFilter={activeMetricFilter}
+          metrics={bookingMetrics}
+          isLoading={isMetricsLoading}
+        />
 
-        <div className="mb-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-x-8 gap-y-3 px-3">
-          <div className="flex min-w-0 items-center gap-5">
-            <div className="relative w-[220px] shrink-0 sm:w-[240px]">
+        <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <div className="relative w-full min-w-0 sm:w-[220px] sm:shrink-0 md:w-[260px]">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search bookings..."
@@ -519,11 +574,31 @@ export function BookingsContent() {
                 </div>
               ) : null}
             </div>
+
+            {!isDetailView ? (
+              <p className="flex h-8 shrink-0 items-center text-sm text-muted-foreground sm:whitespace-nowrap">
+                {searchQuery ? (
+                  <span>
+                    Search Results: <span className="font-medium text-foreground">{bookings.length}</span>
+                    {searchQuery && <span className="ml-1">for &quot;{searchQuery}&quot;</span>}
+                  </span>
+                ) : hasFilters || activeMetricFilter ? (
+                  <span>
+                    Filtered: <span className="font-medium text-foreground">{bookings.length}</span> / Total:{" "}
+                    <span className="font-medium text-foreground">{allBookingUnits.length}</span>
+                  </span>
+                ) : (
+                  <span>
+                    No of Records: <span className="font-medium text-foreground">{allBookingUnits.length}</span>
+                  </span>
+                )}
+              </p>
+            ) : null}
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-3 pb-4">
-          {projectId && unitId ? (
+        <div className="min-h-0 flex-1 overflow-auto pb-4">
+          {isDetailView && projectId && unitId ? (
             <BookingDetailPage
               projectId={projectId}
               unitId={unitId}

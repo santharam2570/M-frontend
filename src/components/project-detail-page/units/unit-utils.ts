@@ -83,7 +83,57 @@ export function isBookingStatus(
   options: ProjectSettingOption[] = [],
 ): boolean {
   const label = getStatusLabel(status, options).toLowerCase().trim()
-  return label === "booking" || label === "booked"
+  const value = resolveStatusValue(status, options).toLowerCase().trim()
+  return (
+    label === "booking" ||
+    label === "booked" ||
+    label === "sold" ||
+    label === "registered" ||
+    value === "booked" ||
+    value === "sold" ||
+    value === "registered"
+  )
+}
+
+export type UnitStatusFilter = "available" | "on_hold" | "booked" | "owner_site"
+
+export function isAvailableStatus(
+  status: string,
+  options: ProjectSettingOption[] = [],
+): boolean {
+  const label = getStatusLabel(status, options).toLowerCase().trim()
+  const value = resolveStatusValue(status, options).toLowerCase().trim()
+  return label === "available" || value === "available"
+}
+
+export function isOnHoldStatus(
+  status: string,
+  options: ProjectSettingOption[] = [],
+): boolean {
+  const label = getStatusLabel(status, options).toLowerCase().trim()
+  const value = resolveStatusValue(status, options).toLowerCase().trim()
+  return label === "on hold" || label === "hold" || value === "hold"
+}
+
+export function matchesUnitStatusFilter(
+  status: string,
+  filter: UnitStatusFilter | null | undefined,
+  options: ProjectSettingOption[] = [],
+): boolean {
+  if (!filter) return true
+
+  switch (filter) {
+    case "available":
+      return isAvailableStatus(status, options)
+    case "on_hold":
+      return isOnHoldStatus(status, options)
+    case "booked":
+      return isBookingStatus(status, options)
+    case "owner_site":
+      return isOwnerSiteStatus(status, options)
+    default:
+      return true
+  }
 }
 
 export function isOwnerSiteStatus(

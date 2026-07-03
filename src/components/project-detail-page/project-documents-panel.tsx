@@ -10,7 +10,6 @@ import URLS from "@/config/urls"
 import { useToast } from "@/hooks/use-toast"
 import { getApiErrorMessage } from "@/lib/api"
 import {
-  fetchProjectDocuments,
   uploadProjectDocumentApi,
 } from "@/lib/projects/project-api"
 import type { ProjectDocument } from "@/lib/projects/types"
@@ -26,7 +25,9 @@ const CATEGORY_LABELS: Record<ProjectDocument["category"], string> = {
 
 interface ProjectDocumentsPanelProps {
   projectId: string
+  documents: ProjectDocument[]
   onDocumentsCountChange?: (count: number) => void
+  onRefresh?: () => void
 }
 
 function getDocumentUrl(documentPath: string) {
@@ -42,45 +43,19 @@ function getDocumentUrl(documentPath: string) {
 
 export function ProjectDocumentsPanel({
   projectId,
+  documents,
   onDocumentsCountChange,
+  onRefresh,
 }: ProjectDocumentsPanelProps) {
   const { toast } = useToast()
   const generalUploadRef = useRef<HTMLInputElement>(null)
   const cardInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
-  const [documents, setDocuments] = useState<ProjectDocument[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [uploadingDocId, setUploadingDocId] = useState<string | null>(null)
   const [isGeneralUploading, setIsGeneralUploading] = useState(false)
 
-  const loadDocuments = useCallback(async () => {
-    if (!projectId) {
-      setDocuments([])
-      onDocumentsCountChange?.(0)
-      setIsLoading(false)
-      return
-    }
-
-    setIsLoading(true)
-    try {
-      const items = await fetchProjectDocuments(projectId)
-      setDocuments(items)
-      onDocumentsCountChange?.(items.length)
-    } catch (error) {
-      setDocuments([])
-      onDocumentsCountChange?.(0)
-      toast({
-        title: "Error",
-        description: getApiErrorMessage(error, "Failed to load documents."),
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [onDocumentsCountChange, projectId, toast])
-
   useEffect(() => {
-    void loadDocuments()
-  }, [loadDocuments])
+    onDocumentsCountChange?.(documents.length)
+  }, [documents, onDocumentsCountChange])
 
   const handleDocumentUpload = useCallback(
     async (file: File, documentId?: string, category?: ProjectDocument["category"]) => {
@@ -106,7 +81,7 @@ export function ProjectDocumentsPanel({
           name: file.name,
           category: category ?? "other",
         })
-        await loadDocuments()
+        onRefresh?.()
         toast({
           title: "Success",
           description: "Document uploaded successfully",
@@ -122,7 +97,7 @@ export function ProjectDocumentsPanel({
         setIsGeneralUploading(false)
       }
     },
-    [loadDocuments, projectId, toast],
+    [onRefresh, projectId, toast],
   )
 
   const handleDocumentDownload = async (fileUrl: string, fileName: string) => {
@@ -184,12 +159,7 @@ export function ProjectDocumentsPanel({
         />
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 p-8 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading documents...
-        </div>
-      ) : documents.length === 0 ? (
+      {documents.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
           No documents uploaded yet.
         </div>

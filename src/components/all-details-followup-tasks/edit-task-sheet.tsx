@@ -415,7 +415,7 @@ export function EditTaskSheet({
             <SheetDescription>Update task details, schedule, and assignment</SheetDescription>
           </SheetHeader>
 
-          <div className="px-6 py-6">
+          <div className="px-4 py-5 sm:px-6 sm:py-6">
             {isLoading ? (
               <EditTaskFormSkeleton />
             ) : (
@@ -429,7 +429,7 @@ export function EditTaskSheet({
                       <FormItem className={formModalFieldGroupClassName}>
                         <RequiredLabel>Task Type</RequiredLabel>
                         <FormControl>
-                          <div className="grid grid-cols-5 gap-2">
+                          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                             {TASK_TYPES.map(({ label, icon: Icon, color, active }) => {
                               const isActive = field.value === label
                               return (
@@ -438,7 +438,7 @@ export function EditTaskSheet({
                                   type="button"
                                   onClick={() => field.onChange(label)}
                                   className={cn(
-                                    "flex flex-col items-center gap-1.5 rounded-lg border border-transparent p-3 transition-colors",
+                                    "flex flex-col items-center gap-1 rounded-lg border border-transparent p-2 transition-colors sm:gap-1.5 sm:p-3",
                                     isActive
                                       ? active
                                       : "border-border bg-muted/30 hover:bg-muted/60",
@@ -669,7 +669,7 @@ export function EditTaskSheet({
           </div>
         </div>
 
-        <div className={cn(formModalFooterClassName, "flex-row justify-end")}>
+        <div className={formModalFooterClassName}>
           <Button
             type="button"
             variant="outline"

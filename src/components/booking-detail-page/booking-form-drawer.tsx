@@ -88,6 +88,8 @@ export type BookingFormValues = z.infer<typeof bookingFormSchema>
 interface BookingNotesMeta {
   salutation?: string
   payment_reference?: string
+  plot_no?: string
+  site_area?: string
   plain?: string
 }
 
@@ -120,6 +122,8 @@ function decodeBookingNotes(notes?: string): BookingNotesMeta {
   return {}
 }
 
+export { decodeBookingNotes }
+
 function formatSiteArea(unit: BookingUnitContext): string {
   if (unit.area_sqft != null && unit.area_sqft > 0) {
     return `${unit.area_sqft.toLocaleString("en-IN")} sq.ft`
@@ -129,6 +133,8 @@ function formatSiteArea(unit: BookingUnitContext): string {
   }
   return ""
 }
+
+export { formatSiteArea }
 
 export function amountInWordsInr(amount: number): string {
   const ones = [
@@ -211,8 +217,8 @@ export function createDefaultFormValues(
       payment_mode: "cash",
       payment_type: "installment",
       payment_reference: "",
-      plot_no: previousReceipt.unit_no || unit.unit_no || "",
-      site_area: formatSiteArea(unit),
+    plot_no: previousReceipt.unit_no || notesMeta.plot_no || unit.unit_no || "",
+    site_area: notesMeta.site_area || formatSiteArea(unit),
       registration_date: parseApiDate(previousReceipt.registration_date) ?? null,
     }
   }
@@ -254,8 +260,8 @@ export function mapBookingToFormValues(
       ? (booking.transaction_type as BookingFormValues["payment_type"])
       : "token",
     payment_reference: notesMeta.payment_reference || "",
-    plot_no: booking.unit_no || unit.unit_no || "",
-    site_area: formatSiteArea(unit),
+    plot_no: booking.unit_no || notesMeta.plot_no || unit.unit_no || "",
+    site_area: notesMeta.site_area || formatSiteArea(unit),
     registration_date: parseApiDate(booking.registration_date) ?? null,
   }
 }

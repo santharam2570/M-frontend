@@ -737,7 +737,8 @@ export function ManageUsers() {
     }
 
     return (
-      <Table>
+      <div className="responsive-table-wrap">
+      <Table className="min-w-[800px]">
         <TableHeader>
           <TableRow>
             <TableHead
@@ -883,6 +884,7 @@ export function ManageUsers() {
           ))}
         </TableBody>
       </Table>
+      </div>
     )
   }
 

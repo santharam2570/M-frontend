@@ -124,9 +124,17 @@
   html,
   body {
     @apply font-sans;
+    overflow-x: hidden;
+    max-width: 100%;
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .responsive-table-wrap {
+    @apply -mx-1 overflow-x-auto px-1;
   }
 }
 

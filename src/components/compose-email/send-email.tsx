@@ -1245,7 +1245,7 @@ const handleSendEmail = async (data: z.infer<typeof emailSchema>) => {
                           Templates
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-[300px] max-h-[300px] overflow-y-auto">
+                      <DropdownMenuContent align="end" className="w-[min(100vw-2rem,300px)] max-h-[300px] overflow-y-auto">
                         <div className="p-2">
                           <div className="relative">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -1373,11 +1373,11 @@ const handleSendEmail = async (data: z.infer<typeof emailSchema>) => {
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-background p-4 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t bg-background p-4 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] sm:flex-row sm:items-center sm:justify-between">
               <input type="file" ref={fileInputRef} className="hidden" multiple />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="outline" className={cn(footerButtonClass, "gap-1.5")}>
+                  <Button type="button" variant="outline" className={cn(footerButtonClass, "w-full gap-1.5 sm:w-auto")}>
                     <Paperclip className="h-4 w-4" />
                     Attach
                   </Button>
@@ -1394,10 +1394,10 @@ const handleSendEmail = async (data: z.infer<typeof emailSchema>) => {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <div className="flex flex-row-reverse gap-3">
+              <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:flex-row-reverse sm:gap-3">
                 <Button
                   type="submit"
-                  className={footerButtonClass}
+                  className={cn(footerButtonClass, "w-full sm:w-auto")}
                   disabled={isSubmitting || toEmails.length === 0}
                 >
                   {isSubmitting ? (
@@ -1415,7 +1415,7 @@ const handleSendEmail = async (data: z.infer<typeof emailSchema>) => {
                 <Button
                   type="button"
                   variant="outline"
-                  className={footerButtonClass}
+                  className={cn(footerButtonClass, "w-full sm:w-auto")}
                   onClick={() => {
                     const shouldClose = clearInputsWithConfirmation()
                     if (shouldClose) {

@@ -186,7 +186,8 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          showCloseButton
+          className="w-(--sidebar-width) max-w-[min(100vw,20rem)] bg-sidebar p-0 text-sidebar-foreground [&>button]:right-3 [&>button]:top-3 [&>button]:text-white [&>button]:hover:bg-white/10"
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,

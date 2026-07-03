@@ -209,7 +209,7 @@ export function DynamicProductSelector({ products, onProductsChange, disabled = 
       )}
 
       {products.map((product, index) => (
-        <div key={index} className="flex items-center gap-3 p-3 border rounded-lg bg-gray-50">
+        <div key={index} className="flex flex-col gap-3 rounded-lg border bg-gray-50 p-3 sm:flex-row sm:items-center">
           {/* Sub Category Dropdown */}
           <div className="flex-1">
             <Select
@@ -271,8 +271,9 @@ export function DynamicProductSelector({ products, onProductsChange, disabled = 
               </Select>
           </div>
 
-          {/* Quantity Input */}
-          <div className="w-20">
+          {/* Quantity + delete row */}
+          <div className="flex items-center justify-end gap-2 sm:contents">
+          <div className="w-full sm:w-20">
             <Input
               type="number"
               min="1"
@@ -315,6 +316,7 @@ export function DynamicProductSelector({ products, onProductsChange, disabled = 
           >
             <Trash2 className="h-4 w-4" />
           </Button>
+          </div>
         </div>
       ))}
     </div>

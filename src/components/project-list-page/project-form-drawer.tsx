@@ -50,6 +50,7 @@ import {
   formSelectTriggerClassName,
   formTextareaClassName,
 } from "@/lib/form-field-styles"
+import { createProjectApi } from "@/lib/projects/project-api"
 import { PROPERTY_TYPE_LABELS } from "@/lib/projects/types"
 
 const footerButtonClass = "h-10 min-w-[88px] rounded-md px-4 py-2"

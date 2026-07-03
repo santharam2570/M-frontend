@@ -710,7 +710,7 @@ const formatContactDateOfBirth = (dateStr?: string) => {
   try {
     const date = new Date(dateStr)
     if (!Number.isNaN(date.getTime())) {
-      return format(date, "dd MMM yyyy")
+      return format(date, "dd-MM-yyyy")
     }
   } catch {
     // fall through to raw value
@@ -1675,7 +1675,6 @@ export default function LeadDetailPage() {
     : undefined
   const [loading, setLoading] = useState(!cachedDetail)
   const [error, setError] = useState<string | null>(null)
-  const [currencyList, setCurrencyList] = useState<any[]>([]);
   const [isEmailSheetOpen, setIsEmailSheetOpen] = useState(false)
   const [selectedContact, setSelectedContact] = useState<{_id: string; contact_name: string; email: string; associate_to: string} | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -1808,14 +1807,12 @@ export default function LeadDetailPage() {
     notQualifiedReasons: [] as any[],
   })
   const [profileData, setProfileData] = useState({
-    assigned2: "",
     currency: ""
   });
   const [opportunityData, setOpportunityData] = useState({
     opportunity_name: "",
     target_date: format(new Date(), 'yyyy-MM-dd'),
     amount: 0,
-    currency_id: "",
     assigned_to: "",
     application: ""
   });
@@ -1867,7 +1864,7 @@ export default function LeadDetailPage() {
   
   // Add a mobile-specific style to ensure content is visible and scrollable
   const mobileScrollFix = `
-  @media (max-width: 1023px) {
+  @media (max-width: 767px) {
     body {
       overflow-y: auto !important;
     }
@@ -2090,7 +2087,6 @@ export default function LeadDetailPage() {
       fetchLeadSettings()
       fetchAssignableUsers()
       fetchProfileData()
-      fetchCurrencyList()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id])
@@ -2285,7 +2281,9 @@ export default function LeadDetailPage() {
             })
             const unresolvedNotes = pendingNotes.filter(
               (item) =>
-                !processedData.notes.some((serverItem) => serverItem.note === item.note),
+                !processedData.notes.some(
+                  (serverItem) => serverItem.note.trim() === item.note.trim(),
+                ),
             )
 
             return {
@@ -2482,38 +2480,6 @@ export default function LeadDetailPage() {
   }
 
   // Add function to fetch profile data
-  const fetchCurrencyList = async () => {
-    try {
-      const storedData = localStorage.getItem('map_user');
-      if (!storedData) {
-        throw new Error('User not authenticated');
-      }
-      const userData = JSON.parse(storedData);
-
-      const response = await fetch(URLS.CURRENCIES_LIST, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${userData.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const result = await response.json();
-      if (result.code === '200' && result.data?.organization?.currency_list) {
-        setCurrencyList(result.data.organization.currency_list);
-      } else {
-        throw new Error(result.msg || 'Failed to fetch currency list');
-      }
-    } catch (err) {
-      setError(err.message);
-      toast({
-        title: "Error",
-        description: "Failed to fetch currency list",
-        variant: "destructive",
-      });
-    }
-  };
-
   const fetchProfileData = async () => {
     try {
       const storedData = localStorage.getItem('map_user')
@@ -2533,7 +2499,6 @@ export default function LeadDetailPage() {
       const result = await response.json()
       if (result.code === 200) {
         setProfileData({
-          assigned2: result.data._id,
           currency: result.data.currency
         })
       } else {
@@ -3074,8 +3039,8 @@ export default function LeadDetailPage() {
     }
   }, [leadData]);
 
-  const handleNewNote = (note?: { content?: string }) => {
-    if (note?.content?.trim()) {
+  const handleNewNote = (note?: { content?: string }, meta?: { isEdit?: boolean }) => {
+    if (!meta?.isEdit && note?.content?.trim()) {
       prependOptimisticNote(note.content.trim())
     }
     void fetchLeadActivityData({ showErrorToast: false, silent: true })
@@ -3997,11 +3962,11 @@ export default function LeadDetailPage() {
         {scrollbarStyles}
         {mobileScrollFix}
       </style>
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-auto xl:overflow-hidden">
         <div className="flex flex-col flex-1 min-w-0">
-          <div className="bg-white border-b border-slate-200/80 px-4 lg:px-8 py-5 w-full">
-            <div className="flex items-start gap-4 w-full">
-              <Avatar className="h-16 w-16 lg:h-[72px] lg:w-[72px] bg-primary/10 text-primary text-2xl font-bold rounded-full shrink-0">
+          <div className="bg-white border-b border-slate-200/80 px-3 py-4 sm:px-4 lg:px-8 lg:py-5 w-full">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4 w-full">
+              <Avatar className="h-14 w-14 sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px] bg-primary/10 text-primary text-xl sm:text-2xl font-bold rounded-full shrink-0">
                 <div className="flex items-center justify-center h-full w-full">
                   {(leadData.name || "L").charAt(0).toUpperCase()}
                 </div>
@@ -4033,26 +3998,45 @@ export default function LeadDetailPage() {
                         {
                           icon: Phone,
                           label: "Call",
+                          iconClassName: "text-green-500",
                           onClick: () =>
                             leadData.phone &&
                             (window.location.href = `tel:${leadData.phone.replace(/\D/g, "")}`),
                           disabled: !leadData.phone,
                         },
                         {
+                          icon: WhatsAppIcon,
+                          label: "WhatsApp",
+                          iconClassName: "text-emerald-600",
+                          onClick: () => {
+                            if (leadData.phone) {
+                              window.open(
+                                `https://wa.me/${leadData.phone.replace(/\D/g, "")}`,
+                                "_blank",
+                                "noopener,noreferrer"
+                              )
+                            }
+                          },
+                          disabled: !leadData.phone,
+                        },
+                        {
                           icon: Mail,
                           label: "Email",
+                          iconClassName: "text-blue-500",
                           onClick: () => handleEmailClick(),
                           disabled: false,
                         },
                         {
                           icon: CheckSquare,
                           label: "Task",
+                          iconClassName: "text-amber-500",
                           onClick: () => setIsTaskSheetOpen(true),
                           disabled: false,
                         },
                         {
                           icon: UserPlus,
                           label: "Add Contact",
+                          iconClassName: "text-indigo-500",
                           onClick: () => setContactSheetOpen(true),
                           disabled: false,
                         },
@@ -4064,10 +4048,10 @@ export default function LeadDetailPage() {
                                 variant="outline"
                                 size="icon"
                                 disabled={action.disabled}
-                                className="h-8 w-8 rounded-full border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                className="h-8 w-8 rounded-full border-slate-200 bg-white hover:bg-slate-50"
                                 onClick={action.onClick}
                               >
-                                <action.icon className="h-3.5 w-3.5" />
+                                <action.icon className={cn("h-3.5 w-3.5", action.iconClassName)} />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent><p>{action.label}</p></TooltipContent>
@@ -4091,7 +4075,7 @@ export default function LeadDetailPage() {
                     {isCompanyEditOpen ? (
                       <div
                         ref={companyEditRef}
-                        className="absolute left-0 top-full z-20 mt-2 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
+                        className="absolute left-0 top-full z-20 mt-2 w-[min(100vw-2rem,16rem)] rounded-lg border border-slate-200 bg-white p-3 shadow-lg sm:w-64"
                       >
                         <Label htmlFor="company-name-edit" className={formModalLabelClassName}>
                           Company Name
@@ -4135,7 +4119,7 @@ export default function LeadDetailPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-4 shrink-0 lg:pt-1">
                   <div className="flex items-center gap-2">
                     <User className="hidden sm:block h-4 w-4 shrink-0 text-slate-400" />
-                    <span className={cn(leadDetailMetaLabelClassName, "whitespace-nowrap")}>Assigned To:</span>
+                    <span className={cn(leadDetailMetaLabelClassName, "shrink-0 sm:whitespace-nowrap")}>Assigned To:</span>
                     <LeadDetailFieldDropdown
                       currentValue={leadData.assigned_to}
                       fallbackLabel={leadData.assigned}
@@ -4148,7 +4132,7 @@ export default function LeadDetailPage() {
                     />
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={cn(leadDetailMetaLabelClassName, "whitespace-nowrap")}>Status:</span>
+                    <span className={cn(leadDetailMetaLabelClassName, "shrink-0 sm:whitespace-nowrap")}>Status:</span>
                     <LeadDetailFieldDropdown
                       currentValue={leadData.lead_status}
                       fallbackLabel={leadData.lead_status_name}
@@ -4161,7 +4145,7 @@ export default function LeadDetailPage() {
                     />
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={cn(leadDetailMetaLabelClassName, "whitespace-nowrap")}>Stage:</span>
+                    <span className={cn(leadDetailMetaLabelClassName, "shrink-0 sm:whitespace-nowrap")}>Stage:</span>
                     <LeadDetailFieldDropdown
                       currentValue={leadStageValue}
                       fallbackLabel={leadStageValue}
@@ -4181,7 +4165,7 @@ export default function LeadDetailPage() {
             </div>
           </div>
 
-          <div className="flex flex-col xl:flex-row flex-1 xl:overflow-hidden gap-5 p-4 lg:p-6 bg-[#f1f5f9]">
+          <div className="flex flex-col xl:flex-row flex-1 min-h-0 xl:overflow-hidden gap-4 p-3 sm:gap-5 sm:p-4 lg:p-6 bg-[#f1f5f9]">
             <div
               ref={contactInfoRef}
               className="w-full xl:w-[300px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar space-y-4"
@@ -4303,7 +4287,7 @@ export default function LeadDetailPage() {
                           options={paymentOptions}
                           canEdit={true}
                         />
-                        <EditableField variant="detail" icon={Calendar} field="dob" value={leadData.dob} label="DOB" type="date" onSave={handleFieldUpdate} canEdit={true} />
+                        <EditableField variant="detail" icon={Calendar} field="dob" value={leadData.dob} label="DOB" type="dob" onSave={handleFieldUpdate} canEdit={true} />
                         <EditableField variant="detail" icon={FileText} field="sod" value={leadData.sod} label="SOD" onSave={handleFieldUpdate} canEdit={true} />
                       </div>
                       <div className="mt-4 border-t border-slate-100 pt-4">
@@ -4361,34 +4345,34 @@ export default function LeadDetailPage() {
               <Tabs defaultValue="overview" className="w-full">
                 <div className="border-b border-slate-100 bg-white px-2">
                   <div className="px-4">
-                    <TabsList className="h-auto p-0 bg-transparent border-b-0 overflow-x-auto flex w-full gap-1">
+                    <TabsList className="h-auto p-0 bg-transparent border-b-0 overflow-x-auto flex w-full min-w-0 gap-0.5 sm:gap-1">
                       <TabsTrigger
                         value="overview"
-                        className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
                       >
                         Activity
                       </TabsTrigger>
                       <TabsTrigger
                         value="notes"
-                        className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
                       >
                         Notes ({activityData.notes.length})
                       </TabsTrigger>
                       <TabsTrigger
                         value="tasks"
-                        className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
                       >
                         Tasks ({taskList.length})
                       </TabsTrigger>
                       <TabsTrigger
                         value="emails"
-                        className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
                       >
                         Emails ({activityData.email.length})
                       </TabsTrigger>
                       <TabsTrigger
                         value="documents"
-                        className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
                       >
                         Documents ({activityData.document.length})
                       </TabsTrigger>
@@ -4396,7 +4380,7 @@ export default function LeadDetailPage() {
                   </div>
                 </div>
 
-                <div className="p-5 lg:p-6">
+                <div className="p-3 sm:p-5 lg:p-6">
                   <TabsContent value="overview" className="m-0">
 
                                         {/* Not Qualified Details Section */}
@@ -4494,7 +4478,7 @@ export default function LeadDetailPage() {
                                     {String(activity.category_name || "activity").replace(/_/g, " ")}
                                   </p>
                                   <p className={cn(leadDetailBodyClassName, "break-words leading-relaxed")}>{activity.text_info}</p>
-                                  <div className="flex items-center justify-between mt-2 gap-2">
+                                  <div className="flex flex-col gap-1 mt-2 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                                     {activity.createBy ? (
                                       <div className={cn("flex items-center", leadDetailCaptionClassName)}>
                                         <User className="h-3 w-3 mr-1" />
@@ -4503,7 +4487,7 @@ export default function LeadDetailPage() {
                                     ) : (
                                       <span />
                                     )}
-                                    <span className={cn(leadDetailCaptionClassName, "whitespace-nowrap")}>
+                                    <span className={cn(leadDetailCaptionClassName, "shrink-0 sm:whitespace-nowrap")}>
                                       {activity.create_date} • {activity.create_time}
                                     </span>
                                   </div>
@@ -4529,7 +4513,7 @@ export default function LeadDetailPage() {
                   </TabsContent>
 
                   <TabsContent value="tasks" className="m-0">
-                    <div className="flex justify-between items-center mb-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
                       <h2 className={leadDetailSectionTitleClassName}>Tasks</h2>
                       <Button size="sm" className="h-8" onClick={() => setIsTaskSheetOpen(true)}>
                         <Plus className="h-4 w-4 mr-1" />
@@ -4550,33 +4534,23 @@ export default function LeadDetailPage() {
                                 </div>
                               </div>
                               <div className="flex-1">
-                                <div className="flex justify-between items-start">
-                                  <div className="flex items-center gap-2">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-start">
+                                  <div className="flex min-w-0 items-center gap-2">
                                     <div className="flex-shrink-0">{getTaskIcon(task.new_task_type)}</div>
                                     <h3
                                       className={cn(
                                         leadDetailFieldValueClassName,
+                                        "break-words",
                                         task.status === "Completed" && "line-through text-slate-500",
                                       )}
                                     >
                                       {task.description}
                                     </h3>
                                   </div>
-                                  {/* <span
-                                    className={`text-xs px-2 py-0.5 rounded-full ${
-                                      task.priority === "High"
-                                        ? "bg-red-100 text-red-800"
-                                        : task.priority === "Medium"
-                                          ? "bg-yellow-100 text-yellow-800"
-                                          : "bg-primary/10 text-primary"
-                                    }`}
-                                  >
-                                    {task.priority}
-                                  </span> */}
                                   {task.status === "Open" && (
                                    <Button
                                       variant="outline"
-                                      size="sm" className="h-8"
+                                      size="sm" className="h-8 w-full shrink-0 sm:w-auto"
                                       onClick={() => handleEditTask(task)}
                                     >
                                       Edit
@@ -4595,14 +4569,18 @@ export default function LeadDetailPage() {
                                     )}
                                   </div>
                                 )}
-                                <div className={cn("flex items-center mt-2", leadDetailCaptionClassName)}>
-                                  <CalendarIcon className="h-3 w-3 mr-1" />
-                                  <span>Due: {task.date}</span>
-                                  <span className="mx-2">•</span>
-                                  <User className="h-3 w-3 mr-1" />
-                                  <span>{task.assigned}</span>
-                                  <span className="mx-2">•</span>
-                                  <span className={leadDetailCaptionClassName}>{task.new_task_type}</span>
+                                <div className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 mt-2", leadDetailCaptionClassName)}>
+                                  <span className="inline-flex items-center">
+                                    <CalendarIcon className="h-3 w-3 mr-1" />
+                                    Due: {task.date}
+                                  </span>
+                                  <span className="hidden sm:inline">•</span>
+                                  <span className="inline-flex items-center">
+                                    <User className="h-3 w-3 mr-1" />
+                                    {task.assigned}
+                                  </span>
+                                  <span className="hidden sm:inline">•</span>
+                                  <span>{task.new_task_type}</span>
                                 </div>
                               </div>
                             </div>
@@ -4613,7 +4591,7 @@ export default function LeadDetailPage() {
                   </TabsContent>
 
                   <TabsContent value="notes" className="m-0">
-                    <div className="flex justify-between items-center mb-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
                       <h2 className={leadDetailSectionTitleClassName}>Notes</h2>
                       <Button size="sm" className="h-8" onClick={handleOpenAddNote}>
                         <FileEdit className="h-4 w-4 mr-2" />
@@ -4631,20 +4609,20 @@ export default function LeadDetailPage() {
                         activityData.notes.map((note, index) => (
                           <Card key={note._id ?? index}>
                             <CardContent className="p-4">
-                              <div className="flex justify-between items-start mb-2">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-start mb-2">
                                 <div className={cn("flex items-center gap-2", leadDetailFieldValueClassName, "text-primary")}>
                                   <span className="flex items-center justify-center h-6 w-6 rounded-full bg-primary/10 text-primary">
                                     <User className="h-3.5 w-3.5" />
                                   </span>
                                   {note.createBy}
                                 </div>
-                                <div className="flex items-center gap-3">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                                   <p className={leadDetailCaptionClassName}>
                                     {note.create_date} {note.create_time && `• ${note.create_time}`}
                                   </p>
                                   <Button
                                     size="sm"
-                                    className="h-8"
+                                    className="h-8 w-full sm:w-auto"
                                     onClick={() => handleEditNote(note)}
                                   >
                                     <FileEdit className="h-4 w-4 mr-2" />
@@ -4661,7 +4639,7 @@ export default function LeadDetailPage() {
                   </TabsContent>
 
                   <TabsContent value="emails" className="m-0">
-                    <div className="flex justify-between items-center mb-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
                       <h2 className={leadDetailSectionTitleClassName}>Emails</h2>
                       <Button size="sm" className="h-8" onClick={() => handleEmailClick()}>
                         <Send className="h-4 w-4 mr-1" />
@@ -4686,13 +4664,13 @@ export default function LeadDetailPage() {
                               </div>
                             )}
                             <CardContent className="p-4">
-                              <div className="flex justify-between items-start">
-                                <h3 className={leadDetailFieldValueClassName}>{email.subject}</h3>
-                                <span className={leadDetailCaptionClassName}>
+                              <div className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-start">
+                                <h3 className={cn(leadDetailFieldValueClassName, "break-words pr-2")}>{email.subject}</h3>
+                                <span className={cn(leadDetailCaptionClassName, "shrink-0")}>
                                   {email.create_date} • {email.create_time}
                                 </span>
                               </div>
-                              <div className={cn("flex items-center mt-1", leadDetailCaptionClassName)}>
+                              <div className={cn("flex flex-wrap items-center gap-x-1 gap-y-0.5 mt-1", leadDetailCaptionClassName)}>
                                 <span className="font-medium">To:</span>
                                 <span className="ml-1">{email.to}</span>
                                 {email.cc && (
@@ -4703,12 +4681,12 @@ export default function LeadDetailPage() {
                                   </>
                                 )}
                               </div>
-                              <div className="flex items-center justify-between mt-3">
+                              <div className="flex flex-col gap-2 mt-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className={cn("flex items-center", leadDetailCaptionClassName)}>
                                   <User className="h-3 w-3 mr-1" />
                                   <span>Sent by {email.createBy}</span>
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex flex-wrap gap-2">
                                   <Button variant="ghost" size="sm" className="h-8 px-2 text-sm"
                                   onClick={() => handleViewEmail(email)}>
                                     <FileText className="h-3 w-3 mr-1" />
@@ -4917,7 +4895,7 @@ export default function LeadDetailPage() {
                                 label="Contact Name"
                                 value={contact.contact_name}
                                 trailing={
-                                  <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                  <div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                                     <Button
                                       variant="ghost"
                                       size="icon"
@@ -5044,8 +5022,8 @@ export default function LeadDetailPage() {
 
       {/* Convert to Opportunity Sheet */}
       <Sheet open={convertOpportunityOpen} onOpenChange={setConvertOpportunityOpen} side="right">
-        <SheetContent className="sm:max-w-md p-0 flex flex-col h-full">
-          <div className="flex-1 overflow-y-auto p-6">
+        <SheetContent className={sheetFormContentClassName}>
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
             <SheetHeader className="pb-4">
               <SheetTitle className="flex items-center gap-2">
                 <ThumbsUp className="h-5 w-5" />
@@ -5081,37 +5059,19 @@ export default function LeadDetailPage() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="opportunity-value" className={formModalLabelClassName}>
-                  Value <span className="text-red-500 ml-1">*</span>
-                </Label>
-                <Input 
-                  type="number"
-                  value={opportunityData.amount}
-                  onChange={(e) => setOpportunityData(prev => ({
-                    ...prev,
-                    amount: parseFloat(e.target.value)
-                  }))}
-                  className={formInputClassName}
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="currency" className={formModalLabelClassName}>Currency</Label>
-                <Select value={profileData.currency} onValueChange={(value) => setProfileData(prev => ({...prev, currency: value}))}>
-                  <SelectTrigger size="form" className={formSelectTriggerClassName}>
-                    <SelectValue placeholder="Select currency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {currencyList.map((currency) => (
-                      <SelectItem key={currency.currency_id} value={currency.currency_id}>
-                        {currency.currency_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="opportunity-value" className={formModalLabelClassName}>
+                Value <span className="text-red-500 ml-1">*</span>
+              </Label>
+              <Input 
+                type="number"
+                value={opportunityData.amount}
+                onChange={(e) => setOpportunityData(prev => ({
+                  ...prev,
+                  amount: parseFloat(e.target.value)
+                }))}
+                className={formInputClassName}
+              />
             </div>
 
             <div className="grid gap-2">
@@ -5175,10 +5135,11 @@ export default function LeadDetailPage() {
           </div>
 
           {/* Fixed footer with buttons */}
-          <div className="border-t bg-background p-4 flex flex-row-reverse gap-2 shadow-[0_-2px_4px_rgba(0,0,0,0.05)]">
+          <div className={formModalFooterClassName}>
             <Button 
               onClick={handleConvertToOpportunity}
               disabled={isConverting}
+              className={formModalFooterButtonClassName}
             >
               {isConverting ? (
                 <>
@@ -5192,6 +5153,7 @@ export default function LeadDetailPage() {
             <Button
               type="button"
               variant="outline"
+              className={formModalFooterButtonClassName}
               onClick={() => setConvertOpportunityOpen(false)}
               disabled={isConverting}
             >
@@ -5294,7 +5256,7 @@ export default function LeadDetailPage() {
               <SheetDescription>Add notes before completing this task</SheetDescription>
             </SheetHeader>
 
-            <div className="space-y-5 px-6 py-6">
+            <div className="space-y-5 px-4 py-5 sm:px-6 sm:py-6">
               {selectedTaskType === "Visit" && (
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -5353,7 +5315,7 @@ export default function LeadDetailPage() {
             </div>
           </div>
 
-          <div className={cn(formModalFooterClassName, "flex-row justify-end")}>
+          <div className={formModalFooterClassName}>
             <SheetClose asChild>
               <Button variant="outline" className={formModalFooterButtonClassName}>
                 Cancel

@@ -11,7 +11,7 @@ import {
 
 import { Sidebar, SidebarContent, SidebarHeader, SidebarFooter, SidebarRail, 
   SidebarGroup, SidebarMenu, SidebarMenuItem, SidebarMenuButton, 
-  SidebarMenuSub, SidebarMenuSubItem, SidebarMenuSubButton } from "@/components/ui/sidebar"
+  SidebarMenuSub, SidebarMenuSubItem, SidebarMenuSubButton, useSidebar } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -92,8 +92,16 @@ const settingsData: { navMain: NavSection[] } = {
 };
 
 function BackButton() {
+  const { isMobile, setOpenMobile } = useSidebar()
+
   return (
-    <Link href="/lead" className="flex items-center gap-2 px-2 py-1 text-sm font-medium text-primary hover:text-primary/80">
+    <Link
+      href="/lead"
+      className="flex items-center gap-2 px-2 py-1 text-sm font-medium text-primary hover:text-primary/80"
+      onClick={() => {
+        if (isMobile) setOpenMobile(false)
+      }}
+    >
       <ArrowLeft className="h-4 w-4" />
       <span>Back</span>
     </Link>
@@ -101,6 +109,12 @@ function BackButton() {
 }
 
 function NavMain({ items, onSupportClick }: { items: NavSection[], onSupportClick: () => void }) {
+  const { isMobile, setOpenMobile } = useSidebar()
+
+  const handleNavClick = () => {
+    if (isMobile) setOpenMobile(false)
+  }
+
   return (
     <>
       {items.map((section: NavSection) => (
@@ -125,7 +139,7 @@ function NavMain({ items, onSupportClick }: { items: NavSection[], onSupportClic
                           </SidebarMenuSubButton>
                         ) : (
                           <SidebarMenuSubButton asChild>
-                            <Link href={subItem.url}>
+                            <Link href={subItem.url} onClick={handleNavClick}>
                               <span>{subItem.title}</span>
                             </Link>
                           </SidebarMenuSubButton>

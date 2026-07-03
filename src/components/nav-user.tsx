@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { LogOut, MoreVertical, Settings, Trash2, User, HeadphonesIcon } from "lucide-react"
+import { LogOut, MoreVertical, Settings, User, HeadphonesIcon } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from 'react'
 import { useQueryClient } from "@tanstack/react-query"
@@ -61,12 +61,10 @@ export function NavUser() {
   const { toast } = useToast();
   const { isMobile } = useSidebar()
   const [showLogoutConfirmation, setShowLogoutConfirmation] = React.useState(false)
-  const [showClearDemoDataConfirmation, setShowClearDemoDataConfirmation] = React.useState(false)
   const [showSupportModal, setShowSupportModal] = React.useState(false)
   const router = useRouter()
   const queryClient = useQueryClient()
   const [user, setUser] = useState({ name: '', email: '', avatar: '' })
-  const [showClearDemoDataButton, setShowClearDemoDataButton] = React.useState(false)
   const { user: reduxUser, token, logout: reduxLogout } = useReduxAuth()
   useEffect(() => {
     // Use Redux user data if available, fallback to localStorage
@@ -129,42 +127,7 @@ export function NavUser() {
       }
     }
 
-    const fetchDemoDataStatus = async () => {
-      if (!authToken) {
-        setShowClearDemoDataButton(false)
-        return
-      }
-
-      try {
-        const response = await fetch(URLS.DEMO_DATA_CHECK, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-            "Content-Type": "application/json",
-          },
-        })
-
-        if (!response.ok) {
-          setShowClearDemoDataButton(false)
-          return
-        }
-
-        const data = await response.json()
-        if (data.code === 200) {
-          setShowClearDemoDataButton(data.result === 1 || data.result === "1")
-        } else {
-          setShowClearDemoDataButton(false)
-        }
-      } catch (error) {
-        if (!isNetworkError(error)) {
-          console.error("Error fetching demo data status:", error)
-        }
-        setShowClearDemoDataButton(false)
-      }
-    }
-
     fetchProfileData()
-    fetchDemoDataStatus()
   }, [reduxUser, token])
 
   const handleLogout = async () => {
@@ -212,50 +175,6 @@ export function NavUser() {
     setShowLogoutConfirmation(false);
   };
 
-  const handleClearDemoData = () => {
-    setShowClearDemoDataConfirmation(true);
-  };
-
-  const handleClearDemoDataConfirmed = async () => {
-    const authToken = token || (() => {
-      try {
-        const storedData = localStorage.getItem('map_user');
-        const userData = storedData ? JSON.parse(storedData) : null;
-        return userData?.access_token;
-      } catch {
-        return null;
-      }
-    })();
-
-    if (!authToken) {
-      toast({ variant: "destructive", title: "Authentication Error", description: "User not logged in." });
-      return;
-    }
-
-    try {
-      const response = await fetch(URLS.DEMO_DATA_CLEAR, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      const result = await response.json();
-      if (response.ok && result.code === 200) {
-        toast({ title: "Success", description: "Demo data cleared successfully." });
-        setShowClearDemoDataButton(false);
-        // router.refresh(); // Refresh the page after clearing demo data
-        window.location.reload()
-      } else {
-        throw new Error(result.msg || "Failed to clear demo data.");
-      }
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "Error", description: error.message });
-    }
-
-    setShowClearDemoDataConfirmation(false);
-  };
-
   return (
     <SidebarMenu>
       <Dialog open={showLogoutConfirmation} onOpenChange={setShowLogoutConfirmation}>
@@ -270,23 +189,6 @@ export function NavUser() {
             </Button>
             <Button variant="destructive" onClick={handleLogout}>
               Log out
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showClearDemoDataConfirmation} onOpenChange={setShowClearDemoDataConfirmation}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Confirm Clear Demo Data</DialogTitle>
-            <DialogDescription>Are you sure you want to clear the demo data? This action cannot be undone.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowClearDemoDataConfirmation(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleClearDemoDataConfirmed}>
-              Clear Demo Data
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -346,14 +248,6 @@ export function NavUser() {
                     Get Support
                   </DropdownMenuItem>
 
-
-
-              {/* {showClearDemoDataButton && (
-                <DropdownMenuItem onClick={handleClearDemoData}>
-                  <Trash2 />
-                  Clear Demo Data
-                </DropdownMenuItem>
-              )} */}
             </DropdownMenuGroup>
 
 

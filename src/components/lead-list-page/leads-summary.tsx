@@ -41,27 +41,7 @@ function toMetricValue(value: number | undefined | null): number {
 }
 
 function buildMetrics(metrics: LeadMetricsData): Metric[] {
-  const agingDays = metrics.aging_days || 7
-
   return [
-    {
-      id: "this-week",
-      label: "This Week",
-      value: toMetricValue(metrics.created_this_week),
-      highlight: false,
-      icon: CalendarDays,
-      iconClassName: "text-blue-600 bg-blue-50",
-      accentClassName: "hover:border-blue-200 data-[active=true]:border-blue-300 data-[active=true]:bg-blue-50/60",
-    },
-    {
-      id: "aging",
-      label: `Aging >${agingDays} Days`,
-      value: toMetricValue(metrics.aging_leads),
-      highlight: true,
-      icon: Clock,
-      iconClassName: "text-red-600 bg-red-50",
-      accentClassName: "hover:border-red-200 data-[active=true]:border-red-300 data-[active=true]:bg-red-50/60",
-    },
     {
       id: "followup-today",
       label: "Follow-up Today",
@@ -72,8 +52,26 @@ function buildMetrics(metrics: LeadMetricsData): Metric[] {
       accentClassName: "hover:border-amber-200 data-[active=true]:border-amber-300 data-[active=true]:bg-amber-50/60",
     },
     {
+      id: "followups-this-week",
+      label: "This Week Follow-ups",
+      value: toMetricValue(metrics.followups_this_week),
+      highlight: false,
+      icon: CalendarDays,
+      iconClassName: "text-blue-600 bg-blue-50",
+      accentClassName: "hover:border-blue-200 data-[active=true]:border-blue-300 data-[active=true]:bg-blue-50/60",
+    },
+    {
+      id: "pending-followups",
+      label: "Pending Follow-ups",
+      value: toMetricValue(metrics.pending_followups),
+      highlight: true,
+      icon: Clock,
+      iconClassName: "text-red-600 bg-red-50",
+      accentClassName: "hover:border-red-200 data-[active=true]:border-red-300 data-[active=true]:bg-red-50/60",
+    },
+    {
       id: "created-month",
-      label: "Created This Month",
+      label: "Leads Created This Month",
       value: toMetricValue(metrics.created_this_month),
       highlight: false,
       icon: CalendarPlus,
@@ -82,7 +80,7 @@ function buildMetrics(metrics: LeadMetricsData): Metric[] {
     },
     {
       id: "converted-month",
-      label: "Converted This Month",
+      label: "Bookings Converted This Month",
       value: toMetricValue(metrics.converted_this_month),
       highlight: false,
       icon: TrendingUp,
@@ -99,6 +97,8 @@ const EMPTY_METRICS: LeadMetricsData = {
   aging_leads: 0,
   aging_days: 7,
   followup_today: 0,
+  followups_this_week: 0,
+  pending_followups: 0,
   created_this_month: 0,
   converted_this_month: 0,
 }
@@ -113,16 +113,16 @@ export function LeadsSummary({
   const displayMetrics = buildMetrics(metrics ?? EMPTY_METRICS)
 
   return (
-    <section className="mb-1">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
+    <section className="mb-0 mt-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Users className="h-5 w-5 text-primary" />
           Lead Summary
         </h2>
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 w-8 p-0 shrink-0"
+          className="h-8 w-8 shrink-0 p-0"
           onClick={() => setIsCollapsed((prev) => !prev)}
           aria-label={isCollapsed ? "Expand summary" : "Collapse summary"}
         >
@@ -132,8 +132,10 @@ export function LeadsSummary({
 
       <div
         className={cn(
-          "grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-5 transition-all duration-300 ease-in-out",
-          isCollapsed ? "max-h-0 overflow-hidden opacity-0 mt-0" : "max-h-[600px] opacity-100 mt-2",
+          "grid grid-cols-1 gap-4 transition-all duration-300 ease-in-out sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5",
+          isCollapsed
+            ? "mt-0 max-h-0 overflow-hidden opacity-0"
+            : "mt-0 max-h-[1200px] overflow-hidden opacity-100",
         )}
       >
         {displayMetrics.map((metric) => {
@@ -145,9 +147,9 @@ export function LeadsSummary({
               key={metric.id}
               data-active={isActive}
               className={cn(
-                "cursor-pointer border shadow-sm transition-all duration-200 hover:shadow-md min-h-[104px]",
+                "min-h-[104px] cursor-pointer border shadow-sm transition-all duration-200 hover:shadow-md",
                 metric.accentClassName,
-                isActive && "ring-2 ring-primary/40 shadow-md"
+                isActive && "shadow-md ring-2 ring-primary/40",
               )}
               onClick={() => onFilterByMetric(metric.id)}
             >
@@ -155,28 +157,27 @@ export function LeadsSummary({
                 <div className="flex w-full items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <p
+                      title={metric.label}
                       className={cn(
-                        "text-xs font-medium uppercase tracking-wide truncate leading-tight",
-                        isActive ? "text-primary" : "text-muted-foreground"
+                        "truncate text-sm font-bold uppercase leading-tight tracking-wide text-black",
                       )}
                     >
                       {metric.label}
                     </p>
                     <p
                       className={cn(
-                        "mt-2 text-3xl font-bold tabular-nums tracking-tight leading-none",
-                        isActive && "text-primary",
+                        "mt-2 text-3xl font-bold tabular-nums leading-none tracking-tight text-black",
                         metric.highlight && metric.value > 0 && "text-red-600",
-                        isLoading && "text-muted-foreground"
+                        isLoading && "text-muted-foreground",
                       )}
                     >
-                      {isLoading ? "—" : metric.value.toLocaleString()}
+                      {isLoading ? "—" : metric.value.toLocaleString("en-IN")}
                     </p>
                   </div>
                   <div
                     className={cn(
                       "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg",
-                      metric.iconClassName
+                      metric.iconClassName,
                     )}
                   >
                     <Icon className="h-5 w-5" />

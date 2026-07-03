@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, sheetFormContentClassName } from "@/components/ui/sheet"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import URLS from '@/config/urls'
@@ -32,7 +32,7 @@ interface EditNoteData {
 interface AddNoteDrawerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (note: Note) => void
+  onSave: (note: Note, meta?: { isEdit: boolean }) => void
   entityName?: string
   associateId: string
   associateTo: string // "lead", "company", "opportunity", "partner", "onboarding", "new_request", "ticket"
@@ -170,7 +170,7 @@ export default function AddNoteDrawer({
 
       recognition.onresult = (event: { results: { transcript: any }[][] }) => {
         const transcript = event.results[0][0].transcript
-        setContent((prev) => prev + " " + transcript)
+        setContent((prev) => (prev.trim() ? `${prev} ${transcript}` : transcript))
       }
 
       recognition.onerror = (event: { error: any }) => {
@@ -250,7 +250,8 @@ export default function AddNoteDrawer({
   }
 
   const handleSave = async () => {
-    if (content.trim() === "" || isSaving) {
+    const trimmedContent = content.trim()
+    if (trimmedContent === "" || isSaving) {
       toast({
         title: "Please add some content to your note",
         variant: "destructive",
@@ -283,7 +284,7 @@ export default function AddNoteDrawer({
     const newNote: Note = {
       id: editNote?._id || Date.now().toString(),
       title: `Note ${new Date().toLocaleString()}`,
-      content: content,
+      content: trimmedContent,
       createdAt: new Date().toISOString(),
       location: finalLocationData,
     }
@@ -293,7 +294,7 @@ export default function AddNoteDrawer({
       if (!token) throw new Error("Token not found")
 
       const requestPayload = {
-        note: content,
+        note: trimmedContent,
         associate_id: associateId,
         associate_to: associateTo,
         ...(isEditMode ? {} : { location: finalLocationData }),
@@ -324,7 +325,7 @@ export default function AddNoteDrawer({
         setLocationData(null)
 
         onOpenChange(false)
-        onSave(newNote)
+        onSave(newNote, { isEdit: isEditMode })
 
         toast({
           title: isEditMode ? "Note Updated Successfully!" : "Notes Added Successfully!",
@@ -386,8 +387,8 @@ export default function AddNoteDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="data-[side=right]:sm:max-w-md p-0 flex flex-col h-full gap-0">
-        <div className="px-6 py-4">
+      <SheetContent side="right" className={sheetFormContentClassName}>
+        <div className="px-4 py-4 sm:px-6">
           <SheetHeader>
             <SheetTitle className="text-lg font-semibold">
               {isEditMode ? "Edit Note" : "Add New Note"} {entityName ? `for ${entityName}` : ""}
@@ -402,7 +403,7 @@ export default function AddNoteDrawer({
           <Separator className="my-4" />
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6">
           {errorMessage && (
             <Alert variant="destructive" className="mb-4">
               <AlertCircle className="h-4 w-4" />
@@ -451,11 +452,11 @@ export default function AddNoteDrawer({
         </div>
 
         {/* Static footer with Cancel and Save buttons */}
-        <div className="border-t p-4 mt-auto flex justify-between gap-4">
-          <Button variant="outline" className="flex-1" onClick={handleCancel}>
+        <div className="mt-auto flex flex-col-reverse gap-2 border-t p-4 sm:flex-row sm:justify-between sm:gap-4">
+          <Button variant="outline" className="w-full flex-1 sm:w-auto" onClick={handleCancel}>
             Cancel
           </Button>
-          <Button className="flex-1" onClick={handleSave} disabled={isCapturingLocation || isSaving || content.trim() === ""}>
+          <Button className="w-full flex-1 sm:w-auto" onClick={handleSave} disabled={isCapturingLocation || isSaving || content.trim() === ""}>
             {isCapturingLocation ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

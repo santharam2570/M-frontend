@@ -4,28 +4,22 @@
 // Production URLs are used when deployed
 // Update production URLs in src/config/environment.js
 
-import { BASE_URL, APP_BASE_URL, MCP_MAIL_BASE_URL } from './environment';
+import { BASE_URL } from './environment';
 
-const PROFILE_IMAGE_BASE_URL = `${BASE_URL}/uploads/profile`;
 export const URLS = {
 
   SIGNUP: `${BASE_URL}/signup`,
-  GOOGLE_SIGNUP: `${BASE_URL}/google_signup`,
   OTP_VERIFY_MATCH: `${BASE_URL}/otp_verify_match`,
   RESEND_OTP: `${BASE_URL}/resend_otp`,
   LOGIN_RESEND_OTP: `${BASE_URL}/login_resend_otp`,
   LOGIN: `${BASE_URL}/login`,
-  GOOGLE_LOGIN: `${BASE_URL}/gmail_login`,
   FORGOT_PASSWORD: `${BASE_URL}/forgot_password_check`,
-  CHANGE_PASSWORD: `${BASE_URL}/change_Password`,
   CREATE_NEW_PASSWORD: `${BASE_URL}/creat_new_password`,
 
-  LEADS: `${BASE_URL}/add_lead`,
   ADD_LEAD: `${BASE_URL}/add_lead`,
   LEAD_LIST: `${BASE_URL}/lead_list`,
   BULK_DELETE: `${BASE_URL}/bulk_delete`,
   BULK_DELETE_LEADS: `${BASE_URL}/bulk_delete`,
-  ACTIVITY_TIMELINE: `${BASE_URL}/timeline`,
   ADD_NOTES: `${BASE_URL}/notes`,
   LEAD_NOTES_DETAIL: `${BASE_URL}/sales_lead_notes_detail`,
   COMPANY_NOTES_DETAIL: `${BASE_URL}/company_notes_detail`,
@@ -48,7 +42,6 @@ export const URLS = {
   PROJECT_DOCUMENTS: `${BASE_URL}/project_documents`,
 
   BOOKING_LIST: `${BASE_URL}/booking_list`,
-  BOOKING_DETAIL: `${BASE_URL}/booking_detail`,
   BOOKING_METRICS: `${BASE_URL}/booking_metrics`,
   ADD_BOOKING: `${BASE_URL}/add_booking`,
   BOOKING_UPDATE: `${BASE_URL}/booking_edit`,
@@ -56,7 +49,6 @@ export const URLS = {
 
   ADD_PROJECT_SETTINGS: `${BASE_URL}/addprojectsettings`,
   PROJECT_SETTINGS_LIST: `${BASE_URL}/project_settings_list`,
-  PROJECT_SETTINGS_BY_TYPE: `${BASE_URL}/project_settings`,
   UPDATE_PROJECT_SETTINGS: `${BASE_URL}/updateprojectsettings`,
   DELETE_PROJECT_SETTINGS: `${BASE_URL}/projectsettings`,
   PROJECT_SETTINGS_DEFAULT: `${BASE_URL}/projectsettings_default`,
@@ -75,7 +67,6 @@ export const URLS = {
 
   ADD_LEAD_SETTINGS: `${BASE_URL}/addleadsettings`,
   LEAD_SETTINGS_LIST: `${BASE_URL}/lead_settings_list`,
-  LEAD_SETTINGS_BY_TYPE: `${BASE_URL}/lead_settings`,
   UPDATE_LEAD_SETTINGS: `${BASE_URL}/updateleadsettings`,
   DELETE_LEAD_SETTINGS: `${BASE_URL}/leadsettings`,
   LEAD_SETTINGS_DEFAULT: `${BASE_URL}/leadsettings_default`,
@@ -121,11 +112,8 @@ export const URLS = {
   DOCUMENT_ADD: `${BASE_URL}/document`,
   DOCUMENT_BASE_URL: BASE_URL,
 
-  CURRENCIES_LIST: `${BASE_URL}/currencies_list`,
   PROFILE_DATAS: `${BASE_URL}/profile_datas`,
   PROFILE_NEW: `${BASE_URL}/profile_datas`,
-  DEMO_DATA_CHECK: `${BASE_URL}/demo_data_check`,
-  DEMO_DATA_CLEAR: `${BASE_URL}/demo_data_clear`,
   CONVERT_2_OPPORTUNITY: `${BASE_URL}/convert_2_opportunity`,
 
   PRODUCT_SUBCATEGORY_SETTINGS_LIST: `${BASE_URL}/product_subcategory_settings_list`,
@@ -154,19 +142,6 @@ export const URLS = {
   one_list_update: `${BASE_URL}/one_list_update`,
 
 };
-
-/**
- * Dynamically generate API URLs for any resource.
- * @param {string} resource - The resource name (e.g., 'company', 'invoice', 'quote')
- * @param {string} [id] - Optional resource ID
- * @returns {string} - The full API URL
- */
-export function getApiUrl(resource, id) {
-  if (!resource) throw new Error('Resource is required');
-  const base = URLS[resource] || `${BASE_URL}/${resource}`;
-  return id ? `${base}/${id}` : base;
-}
-
 
 export default URLS;
 

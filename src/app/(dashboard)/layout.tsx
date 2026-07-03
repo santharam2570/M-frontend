@@ -93,7 +93,7 @@ function DashboardChrome({ children }: { children: ReactNode }) {
       >
         <TooltipProvider delayDuration={0}>
           <AppSidebar />
-          <SidebarInset>
+          <SidebarInset className="min-w-0 overflow-x-hidden">
             <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
               <div className="shrink-0">
                 <Header

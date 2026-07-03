@@ -45,9 +45,55 @@ function formatIndianCurrency(amount: number): string {
   return `₹${amount.toLocaleString("en-IN")}`
 }
 
+function toMetricValue(value: number | undefined | null): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
 function buildMetrics(metrics: BookingMetricsData): Metric[] {
+  const totalAmountPaid = toMetricValue(metrics.total_amount_paid)
+
   return [
-   
+    {
+      id: "total",
+      label: "Total Bookings",
+      value: toMetricValue(metrics.total_bookings),
+      highlight: false,
+      icon: LayoutGrid,
+      iconClassName: "text-blue-600 bg-blue-50",
+      accentClassName:
+        "hover:border-blue-200 data-[active=true]:border-blue-300 data-[active=true]:bg-blue-50/60",
+    },
+    {
+      id: "this-month",
+      label: "Bookings This Month",
+      value: toMetricValue(metrics.bookings_this_month),
+      highlight: false,
+      icon: Building2,
+      iconClassName: "text-violet-600 bg-violet-50",
+      accentClassName:
+        "hover:border-violet-200 data-[active=true]:border-violet-300 data-[active=true]:bg-violet-50/60",
+    },
+    {
+      id: "amount-paid",
+      label: "Total Amount Paid",
+      value: totalAmountPaid,
+      displayValue: formatIndianCurrency(totalAmountPaid),
+      highlight: false,
+      icon: IndianRupee,
+      iconClassName: "text-emerald-600 bg-emerald-50",
+      accentClassName:
+        "hover:border-emerald-200 data-[active=true]:border-emerald-300 data-[active=true]:bg-emerald-50/60",
+    },
+    {
+      id: "registered-month",
+      label: "Registered This Month",
+      value: toMetricValue(metrics.registered_this_month),
+      highlight: false,
+      icon: Bookmark,
+      iconClassName: "text-amber-600 bg-amber-50",
+      accentClassName:
+        "hover:border-amber-200 data-[active=true]:border-amber-300 data-[active=true]:bg-amber-50/60",
+    },
   ]
 }
 
@@ -68,8 +114,8 @@ export function BookingsSummary({
   const displayMetrics = buildMetrics(metrics ?? EMPTY_METRICS)
 
   return (
-    <section className="mb-1">
-      <div className="mb-2 flex items-center justify-between">
+    <section className="mb-0 mt-5">
+      <div className="mb-3 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Bookmark className="h-5 w-5 text-primary" />
           Booking Summary
@@ -87,8 +133,8 @@ export function BookingsSummary({
 
       <div
         className={cn(
-          "grid grid-cols-1 gap-3.5 transition-all duration-300 ease-in-out sm:grid-cols-2 lg:grid-cols-4",
-          isCollapsed ? "mt-0 max-h-0 overflow-hidden opacity-0" : "mt-2 max-h-[600px] opacity-100",
+          "grid grid-cols-1 gap-4 transition-all duration-300 ease-in-out sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4",
+          isCollapsed ? "mt-0 max-h-0 overflow-hidden opacity-0" : "mt-0 max-h-[1200px] overflow-hidden opacity-100",
         )}
       >
         {displayMetrics.map((metric) => {
@@ -110,17 +156,16 @@ export function BookingsSummary({
                 <div className="flex w-full items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <p
+                      title={metric.label}
                       className={cn(
-                        "truncate text-xs font-medium uppercase leading-tight tracking-wide",
-                        isActive ? "text-primary" : "text-muted-foreground",
+                        "truncate text-sm font-bold uppercase leading-tight tracking-wide text-black",
                       )}
                     >
                       {metric.label}
                     </p>
                     <p
                       className={cn(
-                        "mt-2 text-3xl font-bold tabular-nums leading-none tracking-tight",
-                        isActive && "text-primary",
+                        "mt-2 text-3xl font-bold tabular-nums leading-none tracking-tight text-black",
                         metric.highlight && metric.value > 0 && "text-red-600",
                         isLoading && "text-muted-foreground",
                         metric.id === "amount-paid" && "text-2xl",

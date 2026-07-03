@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Loader2, Phone, Target, UserPlus } from "lucide-react"
+import { Phone, Target, UserPlus } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,19 +10,9 @@ import type { MatchedLead } from "@/lib/projects/types"
 
 interface MatchedLeadsPanelProps {
   leads: MatchedLead[]
-  isLoading?: boolean
 }
 
-export function MatchedLeadsPanel({ leads, isLoading = false }: MatchedLeadsPanelProps) {
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 p-8 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading matched leads...
-      </div>
-    )
-  }
-
+export function MatchedLeadsPanel({ leads }: MatchedLeadsPanelProps) {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">

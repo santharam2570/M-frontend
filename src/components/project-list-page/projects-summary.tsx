@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import {
@@ -12,7 +13,6 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useState } from "react"
 import type { ProjectMetrics } from "@/lib/projects/types"
 
 interface ProjectsSummaryProps {
@@ -31,12 +31,16 @@ interface Metric {
   accentClassName: string
 }
 
+function toMetricValue(value: number | undefined | null): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
 function buildMetrics(metrics: ProjectMetrics): Metric[] {
   return [
     {
       id: "total",
       label: "Total Projects",
-      value: metrics.total_projects,
+      value: toMetricValue(metrics.total_projects),
       icon: Building2,
       iconClassName: "text-primary bg-primary/10",
       accentClassName:
@@ -45,7 +49,7 @@ function buildMetrics(metrics: ProjectMetrics): Metric[] {
     {
       id: "active",
       label: "Active Projects",
-      value: metrics.active_projects,
+      value: toMetricValue(metrics.active_projects),
       icon: LayoutGrid,
       iconClassName: "text-emerald-600 bg-emerald-50",
       accentClassName:
@@ -54,7 +58,7 @@ function buildMetrics(metrics: ProjectMetrics): Metric[] {
     {
       id: "available-units",
       label: "Available Units",
-      value: metrics.available_units,
+      value: toMetricValue(metrics.available_units),
       icon: MapPin,
       iconClassName: "text-amber-600 bg-amber-50",
       accentClassName:
@@ -63,7 +67,7 @@ function buildMetrics(metrics: ProjectMetrics): Metric[] {
     {
       id: "site-visits",
       label: "Site Visits (7d)",
-      value: metrics.site_visits_this_week,
+      value: toMetricValue(metrics.site_visits_this_week),
       icon: CalendarCheck,
       iconClassName: "text-blue-600 bg-blue-50",
       accentClassName:
@@ -72,86 +76,97 @@ function buildMetrics(metrics: ProjectMetrics): Metric[] {
   ]
 }
 
+const EMPTY_METRICS: ProjectMetrics = {
+  total_projects: 0,
+  active_projects: 0,
+  total_units: 0,
+  available_units: 0,
+  site_visits_this_week: 0,
+}
+
 export function ProjectsSummary({
   metrics,
   isLoading = false,
   onFilterByMetric,
   activeMetricFilter,
 }: ProjectsSummaryProps) {
-  const [collapsed, setCollapsed] = useState(false)
-
-  if (isLoading || !metrics) {
-    return (
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Card key={i} className="animate-pulse border-slate-200/80">
-            <CardContent className="h-20 p-4" />
-          </Card>
-        ))}
-      </div>
-    )
-  }
-
-  const items = buildMetrics(metrics)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const displayMetrics = buildMetrics(metrics ?? EMPTY_METRICS)
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">Project overview</p>
+    <section className="mb-0 mt-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <Building2 className="h-5 w-5 text-primary" />
+          Project Summary
+        </h2>
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 gap-1 text-xs text-muted-foreground"
-          onClick={() => setCollapsed((prev) => !prev)}
+          className="h-8 w-8 shrink-0 p-0"
+          onClick={() => setIsCollapsed((prev) => !prev)}
+          aria-label={isCollapsed ? "Expand summary" : "Collapse summary"}
         >
-          {collapsed ? (
-            <>
-              Show <ChevronDown className="h-3.5 w-3.5" />
-            </>
-          ) : (
-            <>
-              Hide <ChevronUp className="h-3.5 w-3.5" />
-            </>
-          )}
+          {isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
         </Button>
       </div>
 
-      {!collapsed ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {items.map((metric) => {
-            const Icon = metric.icon
-            const isActive = activeMetricFilter === metric.id
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-4 transition-all duration-300 ease-in-out sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4",
+          isCollapsed ? "mt-0 max-h-0 overflow-hidden opacity-0" : "mt-0 max-h-[1200px] overflow-hidden opacity-100",
+        )}
+      >
+        {displayMetrics.map((metric) => {
+          const Icon = metric.icon
+          const isActive = activeMetricFilter === metric.id
 
-            return (
-              <Card
-                key={metric.id}
-                data-active={isActive}
-                className={cn(
-                  "cursor-pointer border-slate-200/80 transition-colors",
-                  metric.accentClassName,
-                  !onFilterByMetric && "cursor-default",
-                )}
-                onClick={() => onFilterByMetric?.(metric.id)}
-              >
-                <CardContent className="flex items-center gap-3 p-4">
+          return (
+            <Card
+              key={metric.id}
+              data-active={isActive}
+              className={cn(
+                "min-h-[104px] cursor-pointer border shadow-sm transition-all duration-200 hover:shadow-md",
+                metric.accentClassName,
+                isActive && "shadow-md ring-2 ring-primary/40",
+                !onFilterByMetric && "cursor-default",
+              )}
+              onClick={() => onFilterByMetric?.(metric.id)}
+            >
+              <CardContent className="flex h-full items-center px-4 py-5">
+                <div className="flex w-full items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p
+                      title={metric.label}
+                      className={cn(
+                        "truncate text-sm font-bold uppercase leading-tight tracking-wide text-black",
+                      )}
+                    >
+                      {metric.label}
+                    </p>
+                    <p
+                      className={cn(
+                        "mt-2 text-3xl font-bold tabular-nums leading-none tracking-tight text-black",
+                        isLoading && "text-muted-foreground",
+                      )}
+                    >
+                      {isLoading ? "—" : metric.value.toLocaleString("en-IN")}
+                    </p>
+                  </div>
                   <div
                     className={cn(
-                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+                      "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg",
                       metric.iconClassName,
                     )}
                   >
                     <Icon className="h-5 w-5" />
                   </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-xs text-muted-foreground">{metric.label}</p>
-                    <p className="text-xl font-semibold tabular-nums">{metric.value}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      ) : null}
-    </div>
+                </div>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+    </section>
   )
 }

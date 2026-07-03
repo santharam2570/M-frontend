@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { format, isValid, parseISO } from "date-fns"
 import { Calendar, Loader2, User, Users } from "lucide-react"
 
@@ -38,6 +38,7 @@ import {
 
 interface SiteVisitsPanelProps {
   projectId: string
+  siteVisits: SiteVisit[]
   onRefresh?: () => void
 }
 
@@ -146,25 +147,6 @@ function getAuthHeaders(): HeadersInit {
     "Content-Type": "application/json",
     Authorization: `Bearer ${userData.access_token}`,
   }
-}
-
-async function fetchProjectSiteVisits(projectId: string): Promise<SiteVisit[]> {
-  const response = await fetch(
-    `${URLS.PROJECT_SITE_VISITS}?project_id=${encodeURIComponent(projectId)}`,
-    {
-      method: "GET",
-      headers: getAuthHeaders(),
-    },
-  )
-
-  const result = await parseJsonResponse<ApiEnvelope<RawRecord[]>>(response)
-
-  if (result.code !== 200) {
-    throw new Error(result.msg || "Failed to load site visits.")
-  }
-
-  const items = Array.isArray(result.data) ? result.data : []
-  return items.map((item) => normalizeSiteVisit(item, projectId))
 }
 
 async function createProjectSiteVisit(
@@ -279,10 +261,8 @@ function VisitStatusBadge({ status }: { status: SiteVisit["status"] }) {
   )
 }
 
-export function SiteVisitsPanel({ projectId, onRefresh }: SiteVisitsPanelProps) {
+export function SiteVisitsPanel({ projectId, siteVisits, onRefresh }: SiteVisitsPanelProps) {
   const { toast } = useToast()
-  const [siteVisits, setSiteVisits] = useState<SiteVisit[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [leads, setLeads] = useState<LeadOption[]>([])
   const [users, setUsers] = useState<UserOption[]>([])
@@ -297,34 +277,6 @@ export function SiteVisitsPanel({ projectId, onRefresh }: SiteVisitsPanelProps) 
   const [formErrors, setFormErrors] = useState<ScheduleVisitFormErrors>(EMPTY_FORM_ERRORS)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const hasInitializedAssignee = useRef(false)
-
-  const loadSiteVisits = useCallback(async () => {
-    if (!projectId) {
-      setSiteVisits([])
-      setIsLoading(false)
-      return
-    }
-
-    setIsLoading(true)
-
-    try {
-      const visits = await fetchProjectSiteVisits(projectId)
-      setSiteVisits(visits)
-    } catch (error) {
-      setSiteVisits([])
-      toast({
-        title: "Error",
-        description: getApiErrorMessage(error, "Failed to load site visits."),
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [projectId, toast])
-
-  useEffect(() => {
-    loadSiteVisits()
-  }, [loadSiteVisits])
 
   useEffect(() => {
     if (!dialogOpen) {
@@ -415,7 +367,7 @@ export function SiteVisitsPanel({ projectId, onRefresh }: SiteVisitsPanelProps) 
     setIsSubmitting(true)
 
     try {
-      const created = await createProjectSiteVisit(projectId, {
+      await createProjectSiteVisit(projectId, {
         lead_id: selectedLeadId,
         lead_name: selectedLead?.name ?? "",
         visit_date: visitDate,
@@ -428,8 +380,6 @@ export function SiteVisitsPanel({ projectId, onRefresh }: SiteVisitsPanelProps) 
         next_follow_up_date: visitDate,
         status: "scheduled",
       })
-
-      setSiteVisits((current) => [...current, created])
 
       toast({
         title: "Site visit scheduled",
@@ -466,12 +416,7 @@ export function SiteVisitsPanel({ projectId, onRefresh }: SiteVisitsPanelProps) 
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 p-8 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading site visits...
-        </div>
-      ) : siteVisits.length === 0 ? (
+      {siteVisits.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
           No site visits recorded for this project yet.
         </div>

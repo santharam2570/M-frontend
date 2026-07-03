@@ -22,6 +22,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar"
 
 interface NavItem {
@@ -89,6 +90,13 @@ function isActiveRoute(pathname: string, url: string): boolean {
 
 export function NavMain() {
   const pathname = usePathname()
+  const { isMobile, setOpenMobile } = useSidebar()
+
+  const handleNavClick = () => {
+    if (isMobile) {
+      setOpenMobile(false)
+    }
+  }
 
   return (
     <SidebarGroup className="p-0">
@@ -108,7 +116,7 @@ export function NavMain() {
                 tooltip={item.title}
                 className={navButtonClass}
               >
-                <Link href={item.url}>
+                <Link href={item.url} onClick={handleNavClick}>
                   <Icon strokeWidth={1.75} />
                   <span className="truncate group-data-[collapsible=icon]:hidden">
                     {item.title}

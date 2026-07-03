@@ -219,7 +219,7 @@ export function ManageBranches() {
             Create and manage branches for your organization ({ROLE_TIER_LABELS[roleTier]}).
           </p>
         </div>
-        <Button size="sm" className={themePrimaryButtonSmClassName} onClick={openCreate}>
+        <Button size="sm" className={`${themePrimaryButtonSmClassName} w-full sm:w-auto`} onClick={openCreate}>
           <Plus className="mr-1.5 h-3.5 w-3.5" />
           Add Branch
         </Button>
@@ -227,7 +227,8 @@ export function ManageBranches() {
 
       <Card className="border-none shadow-sm">
         <CardContent className="pt-6">
-          <Table>
+          <div className="responsive-table-wrap">
+          <Table className="min-w-[480px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
@@ -296,6 +297,7 @@ export function ManageBranches() {
               )}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
 

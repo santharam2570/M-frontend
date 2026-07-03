@@ -8,6 +8,8 @@ export interface LeadMetricsData {
   aging_leads: number
   aging_days: number
   followup_today: number
+  followups_this_week: number
+  pending_followups: number
   created_this_month: number
   converted_this_month: number
 }
@@ -55,8 +57,24 @@ function normalizeLeadMetrics(data: unknown): LeadMetricsData {
         raw.follow_up_today ??
         raw.followups_today,
     ),
+    followups_this_week: toNumber(
+      raw.followups_this_week ??
+        raw.followup_this_week ??
+        raw.this_week_followups ??
+        raw.follow_ups_this_week,
+    ),
+    pending_followups: toNumber(
+      raw.pending_followups ??
+        raw.overdue_followups ??
+        raw.overdue_followup_count ??
+        raw.pending_followup,
+    ),
     created_this_month: toNumber(raw.created_this_month),
-    converted_this_month: toNumber(raw.converted_this_month),
+    converted_this_month: toNumber(
+      raw.converted_this_month ??
+        raw.bookings_converted_this_month ??
+        raw.converted_bookings_this_month,
+    ),
   }
 }
 

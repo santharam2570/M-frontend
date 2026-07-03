@@ -6,6 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import { Check, X, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
 interface EditableTitleProps {
   value: string
@@ -74,13 +75,17 @@ export function EditableTitle({
           </div>
         </div>
       ) : (
-        <div className="flex items-center">
-          <h1 className={className}>{value}</h1>
-          {canEdit && isHovering && (
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <h1 className={cn(className, "min-w-0 break-words")}>{value}</h1>
+          {canEdit && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 ml-1 text-gray-400 hover:text-gray-700"
+              className={cn(
+                "h-6 w-6 shrink-0 text-gray-400 hover:text-gray-700",
+                "opacity-100 sm:opacity-0",
+                isHovering && "sm:opacity-100",
+              )}
               onClick={() => setIsEditing(true)}
             >
               <Pencil className="h-3.5 w-3.5" />

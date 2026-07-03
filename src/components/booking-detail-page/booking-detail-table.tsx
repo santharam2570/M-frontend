@@ -4,6 +4,7 @@ import { format, isValid, parseISO } from "date-fns"
 import { Loader2, MoreVertical, Pencil } from "lucide-react"
 
 import type { BookingDetailRecord } from "@/components/booking-detail-page/booking-types"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 const bookingTableHeadClass = (align: "left" | "right" | "center" = "left") =>
   cn(
@@ -51,6 +53,12 @@ export interface BookingReceiptSummary {
   total_amount: number
 }
 
+export interface BookingUnitInfo {
+  plotNumber: string
+  siteArea: string
+  registrationDate?: string | null
+}
+
 function formatIndianCurrency(amount: number): string {
   return `₹${amount.toLocaleString("en-IN")}`
 }
@@ -74,6 +82,7 @@ function formatPaymentType(value: string): string {
 interface BookingDetailTableProps {
   receipts: BookingDetailRecord[]
   summary: BookingReceiptSummary | null
+  unitInfo?: BookingUnitInfo | null
   isLoading?: boolean
   filterLabel?: string
   headerAction?: React.ReactNode
@@ -83,11 +92,14 @@ interface BookingDetailTableProps {
 export function BookingDetailTable({
   receipts,
   summary,
+  unitInfo,
   isLoading,
   filterLabel,
   headerAction,
   onEdit,
 }: BookingDetailTableProps) {
+  const isMobile = useIsMobile()
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground">
@@ -110,7 +122,105 @@ export function BookingDetailTable({
         {headerAction}
       </div>
 
-      <div className="overflow-auto rounded-lg border border-slate-200/80 bg-white">
+      {unitInfo ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Plot Number
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              {unitInfo.plotNumber || "—"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Site Area
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              {unitInfo.siteArea || "—"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Registration Date
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              {formatReceiptDate(unitInfo.registrationDate)}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <div className={isMobile ? "space-y-3" : "overflow-auto rounded-lg border border-slate-200/80 bg-white"}>
+        {isMobile ? (
+          receipts.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-muted-foreground">
+              No bookings found.
+            </div>
+          ) : (
+            <>
+              {receipts.map((receipt) => (
+                <Card key={receipt._id} className="shadow-sm">
+                  <CardContent className="p-4">
+                    <div className="mb-3 flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900">{receipt.customer_name || "—"}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Receipt {receipt.receipt_number || "—"}
+                        </p>
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            title="Actions"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => onEdit?.(receipt)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex gap-2">
+                        <span className="w-24 shrink-0 text-xs text-muted-foreground">Date:</span>
+                        <span>{formatReceiptDate(receipt.booking_date)}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="w-24 shrink-0 text-xs text-muted-foreground">Amount:</span>
+                        <span className="font-medium tabular-nums">{formatIndianCurrency(receipt.amount_paid)}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="w-24 shrink-0 text-xs text-muted-foreground">Mode:</span>
+                        <span>{formatPaymentMode(receipt.payment_type)}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="w-24 shrink-0 text-xs text-muted-foreground">Type:</span>
+                        <span>{formatPaymentType(receipt.transaction_type)}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+              {summary && receipts.length > 0 ? (
+                <div className="rounded-lg border bg-slate-100 px-4 py-3 text-sm font-medium">
+                  <div className="flex items-center justify-between">
+                    <span>
+                      Total ({summary.total_count} receipt{summary.total_count !== 1 ? "s" : ""})
+                    </span>
+                    <span className="tabular-nums">{formatIndianCurrency(summary.total_amount)}</span>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          )
+        ) : (
       <Table className="border-collapse">
         <TableHeader className="border-0 [&_tr]:border-0 [&_th]:border-0">
           <TableRow className="border-0 hover:bg-primary">
@@ -192,6 +302,7 @@ export function BookingDetailTable({
             </TableFooter>
           ) : null}
         </Table>
+        )}
       </div>
     </div>
   )

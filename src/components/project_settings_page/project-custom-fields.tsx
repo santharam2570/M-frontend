@@ -126,11 +126,11 @@ export function ProjectCustomFields() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold tracking-tight">Custom Fields</h2>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-xl font-bold tracking-tight sm:text-2xl">Custom Fields</h2>
         <Button
           size="sm"
-          className="bg-black hover:bg-gray-800 text-sm h-8 px-3"
+          className="h-8 w-full bg-black px-3 text-sm hover:bg-gray-800 sm:w-auto"
           onClick={() => setIsAddDialogOpen(true)}
         >
           <Plus className="mr-1.5 h-3.5 w-3.5" />
@@ -138,10 +138,11 @@ export function ProjectCustomFields() {
         </Button>
       </div>
 
-      <Table>
+      <div className="responsive-table-wrap">
+      <Table className="min-w-[560px]">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[300px]">Field Name</TableHead>
+            <TableHead className="min-w-[140px]">Field Name</TableHead>
             <TableHead>Type</TableHead>
             <TableHead>Created On</TableHead>
             <TableHead className="text-right">Action</TableHead>
@@ -218,6 +219,7 @@ export function ProjectCustomFields() {
           )}
         </TableBody>
       </Table>
+      </div>
 
       <CustomFieldDialog
         title="Add Custom Field"

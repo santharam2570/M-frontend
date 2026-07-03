@@ -10,14 +10,15 @@
  */
 
 // Fallback URLs used when no environment variables are provided.
-const PRODUCTION_URLS = {
-    API_BASE_URL: "https://supernova-contented-distress.ngrok-free.dev",
-    APP_BASE_URL: "https://map-frontend.vercel.app",
-    MCP_MAIL_BASE_URL: "https://localhost:8001",
-};
+// const PRODUCTION_URLS = {
+//     API_BASE_URL: "https://supernova-contented-distress.ngrok-free.dev",
+//     APP_BASE_URL: "https://map-frontend.vercel.app",
+//     MCP_MAIL_BASE_URL: "https://localhost:8001",
+// };
 
 const LOCAL_URLS = {
-    API_BASE_URL: "https://supernova-contented-distress.ngrok-free.dev",
+    // API_BASE_URL: "https://supernova-contented-distress.ngrok-free.dev",
+    API_BASE_URL: "http://localhost:5000",
     APP_BASE_URL: "http://localhost:3000",
     MCP_MAIL_BASE_URL: "https://localhost:8001",
 };
@@ -35,9 +36,7 @@ function isLocalEnvironment() {
     return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.');
 }
 
-/**
- * Gets the appropriate fallback URLs based on the current environment.
- */
+
 function getEnvironmentUrls() {
     return isLocalEnvironment() ? LOCAL_URLS : PRODUCTION_URLS;
 }

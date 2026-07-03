@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
 import Link from "next/link"
 import {
-  ArrowLeft,
   Building,
   FileText,
   Hash,
   IndianRupee,
+  Loader2,
   MapPin,
   ShieldCheck,
   Sparkles,
@@ -48,6 +49,7 @@ import {
 } from "@/lib/projects/types"
 import {
   leadDetailBodyClassName,
+  leadDetailBodyMutedClassName,
   leadDetailCaptionClassName,
   leadDetailMetaLabelClassName,
   leadDetailMetaTextClassName,
@@ -57,6 +59,7 @@ import {
 } from "@/lib/form-field-styles"
 import { cn } from "@/lib/utils"
 import { countUnitsWithOwnerSiteStatus } from "./units/unit-utils"
+import type { UnitStatusFilter } from "./units/unit-utils"
 
 const leadDetailCardClassName =
   "rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)]"
@@ -71,19 +74,33 @@ const RERA_STATUS_OPTIONS = Object.entries(RERA_STATUS_LABELS).map(([value, labe
   label,
 }))
 
+type ProjectDetailSnapshot = {
+  project: Project
+  matchedLeads: MatchedLead[]
+  documentsCount: number
+}
+
 export default function ProjectDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { toast } = useToast()
-  const projectId = String(params?.id ?? "")
+  const projectId = Array.isArray(params?.id) ? params.id[0] : String(params?.id ?? "")
+  const cachedDetail = projectId
+    ? queryClient.getQueryData<ProjectDetailSnapshot>([
+        "project-detail-snapshot",
+        projectId,
+      ])
+    : undefined
 
-  const [project, setProject] = useState<Project | null>(null)
-  const [matchedLeads, setMatchedLeads] = useState<MatchedLead[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [isLoadingMatchedLeads, setIsLoadingMatchedLeads] = useState(true)
+  const [project, setProject] = useState<Project | null>(cachedDetail?.project ?? null)
+  const [matchedLeads, setMatchedLeads] = useState<MatchedLead[]>(cachedDetail?.matchedLeads ?? [])
+  const [isLoading, setIsLoading] = useState(!cachedDetail)
+  const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("units")
+  const [unitStatusFilter, setUnitStatusFilter] = useState<UnitStatusFilter | null>(null)
   const [statusOptions, setStatusOptions] = useState<ProjectSettingOption[]>([])
-  const [documentsCount, setDocumentsCount] = useState(0)
+  const [documentsCount, setDocumentsCount] = useState(cachedDetail?.documentsCount ?? 0)
 
   const loadProject = useCallback(async (options?: { silent?: boolean }) => {
     if (!projectId) {
@@ -91,13 +108,11 @@ export default function ProjectDetailPage() {
       setMatchedLeads([])
       setDocumentsCount(0)
       setIsLoading(false)
-      setIsLoadingMatchedLeads(false)
       return
     }
 
     if (!options?.silent) {
       setIsLoading(true)
-      setIsLoadingMatchedLeads(true)
     }
 
     try {
@@ -122,20 +137,22 @@ export default function ProjectDetailPage() {
       })
       setMatchedLeads(matchedLeadsResult)
       setDocumentsCount(projectDocuments.length)
+      setError(null)
     } catch (error) {
       if (!options?.silent) {
         setProject(null)
         setDocumentsCount(0)
+        const message = getApiErrorMessage(error, "Failed to load project details.")
+        setError(message)
+        toast({
+          title: "Error",
+          description: message,
+          variant: "destructive",
+        })
       }
-      toast({
-        title: "Error",
-        description: getApiErrorMessage(error, "Failed to load project details."),
-        variant: "destructive",
-      })
     } finally {
       if (!options?.silent) {
         setIsLoading(false)
-        setIsLoadingMatchedLeads(false)
       }
     }
   }, [projectId, toast])
@@ -158,6 +175,14 @@ export default function ProjectDetailPage() {
   }, [project, statusOptions])
 
   useEffect(() => {
+    if (!projectId) {
+      setProject(null)
+      setMatchedLeads([])
+      setDocumentsCount(0)
+      setIsLoading(false)
+      return
+    }
+
     try {
       const stored = localStorage.getItem("map_user")
       const userData = stored ? JSON.parse(stored) : null
@@ -170,8 +195,36 @@ export default function ProjectDetailPage() {
       return
     }
 
-    loadProject()
-  }, [loadProject, router])
+    const snapshot = queryClient.getQueryData<ProjectDetailSnapshot>([
+      "project-detail-snapshot",
+      projectId,
+    ])
+
+    if (snapshot) {
+      setProject(snapshot.project)
+      setMatchedLeads(snapshot.matchedLeads)
+      setDocumentsCount(snapshot.documentsCount)
+      setIsLoading(false)
+      setError(null)
+      void loadProject({ silent: true })
+      return
+    }
+
+    setProject(null)
+    setMatchedLeads([])
+    setDocumentsCount(0)
+    setError(null)
+    void loadProject()
+  }, [projectId, loadProject, queryClient, router])
+
+  useEffect(() => {
+    if (isLoading || !projectId || !project?._id) return
+    queryClient.setQueryData<ProjectDetailSnapshot>(["project-detail-snapshot", projectId], {
+      project,
+      matchedLeads,
+      documentsCount,
+    })
+  }, [isLoading, projectId, project, matchedLeads, documentsCount, queryClient])
 
   const handleFieldUpdate = async (field: string, value: string) => {
     if (!project) return
@@ -224,10 +277,34 @@ export default function ProjectDetailPage() {
     handleFieldUpdate("name", value.toUpperCase())
   }
 
+  const handleUnitStatusFilter = (filter: UnitStatusFilter) => {
+    setUnitStatusFilter((current) => (current === filter ? null : filter))
+    setActiveTab("units")
+  }
+
   if (isLoading) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
-        Loading project...
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className={leadDetailBodyMutedClassName}>Loading project details...</p>
+      </div>
+    )
+  }
+
+  if (error && !project) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 px-4">
+        <p className="text-center text-sm text-destructive">{error}</p>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setIsLoading(true)
+            setError(null)
+            void loadProject()
+          }}
+        >
+          Retry
+        </Button>
       </div>
     )
   }
@@ -252,13 +329,6 @@ export default function ProjectDetailPage() {
       <div className="shrink-0 border-b border-slate-200/80 bg-white px-4 py-4 lg:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
-            <Button asChild variant="ghost" size="sm" className="-ml-2 h-8 gap-1.5 text-muted-foreground">
-              <Link href="/projects">
-                <ArrowLeft className="h-4 w-4" />
-                Projects
-              </Link>
-            </Button>
-
             <div className="flex flex-wrap items-center gap-2">
               <EditableTitle
                 value={project.name}
@@ -290,24 +360,60 @@ export default function ProjectDetailPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[420px]">
-            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => handleUnitStatusFilter("available")}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-left transition-colors",
+                unitStatusFilter === "available"
+                  ? "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200"
+                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
+              )}
+            >
               <p className={leadDetailMetaLabelClassName}>Available</p>
               <p className={cn(leadDetailMetaTextClassName, "text-emerald-600")}>
                 {project.available_units}
               </p>
-            </div>
-            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+            </button>
+            <button
+              type="button"
+              onClick={() => handleUnitStatusFilter("on_hold")}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-left transition-colors",
+                unitStatusFilter === "on_hold"
+                  ? "border-amber-300 bg-amber-50 ring-1 ring-amber-200"
+                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
+              )}
+            >
               <p className={leadDetailMetaLabelClassName}>On Hold</p>
               <p className={leadDetailMetaTextClassName}>{project.blocked_units}</p>
-            </div>
-            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+            </button>
+            <button
+              type="button"
+              onClick={() => handleUnitStatusFilter("booked")}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-left transition-colors",
+                unitStatusFilter === "booked"
+                  ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
+                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
+              )}
+            >
               <p className={leadDetailMetaLabelClassName}>Booked</p>
               <p className={leadDetailMetaTextClassName}>{project.sold_units}</p>
-            </div>
-            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+            </button>
+            <button
+              type="button"
+              onClick={() => handleUnitStatusFilter("owner_site")}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-left transition-colors",
+                unitStatusFilter === "owner_site"
+                  ? "border-violet-300 bg-violet-50 ring-1 ring-violet-200"
+                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
+              )}
+            >
               <p className={leadDetailMetaLabelClassName}>Owner Site</p>
               <p className={leadDetailMetaTextClassName}>{ownerSiteUnits}</p>
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -503,33 +609,37 @@ export default function ProjectDetailPage() {
               </div>
 
               <div className="p-5 lg:p-6">
-                <TabsContent value="units" className="m-0">
+                <TabsContent value="units" forceMount className="m-0 data-[state=inactive]:hidden">
                   <UnitsPanel
                     projectId={project._id}
                     units={project.units}
+                    statusFilter={unitStatusFilter}
                     onRefresh={() => loadProject({ silent: true })}
                   />
                 </TabsContent>
 
-                <TabsContent value="site-visits" className="m-0">
+                <TabsContent value="site-visits" forceMount className="m-0 data-[state=inactive]:hidden">
                   <SiteVisitsPanel
                     projectId={project._id}
+                    siteVisits={project.site_visits}
                     onRefresh={() => loadProject({ silent: true })}
                   />
                 </TabsContent>
 
-                <TabsContent value="matched-leads" className="m-0">
-                  <MatchedLeadsPanel leads={matchedLeads} isLoading={isLoadingMatchedLeads} />
+                <TabsContent value="matched-leads" forceMount className="m-0 data-[state=inactive]:hidden">
+                  <MatchedLeadsPanel leads={matchedLeads} />
                 </TabsContent>
 
-                <TabsContent value="documents" className="m-0">
+                <TabsContent value="documents" forceMount className="m-0 data-[state=inactive]:hidden">
                   <ProjectDocumentsPanel
                     projectId={projectId}
+                    documents={project.documents}
                     onDocumentsCountChange={setDocumentsCount}
+                    onRefresh={() => loadProject({ silent: true })}
                   />
                 </TabsContent>
 
-                <TabsContent value="overview" className="m-0 space-y-4">
+                <TabsContent value="overview" forceMount className="m-0 space-y-4 data-[state=inactive]:hidden">
                   <div>
                     <h3 className={cn(leadDetailSectionTitleClassName, "mb-2")}>Description</h3>
                     <EditableField

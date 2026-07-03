@@ -7,6 +7,11 @@ export const metadata: Metadata = {
   description: "Discover properties, connect with agents, and find your next home.",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 // Runs before React hydration to apply the persisted theme immediately,
 // preventing a light-mode flash for users who selected dark mode.
 const themeInitScript = `
