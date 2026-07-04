@@ -11,7 +11,7 @@
 
 // Fallback URLs used when no environment variables are provided.
 const PRODUCTION_URLS = {
-    // API_BASE_URL: "https://supernova-contented-distress.ngrok-free.dev",
+    API_BASE_URL: "https://supernova-contented-distress.ngrok-free.dev",
     
     // APP_BASE_URL: "https://map-frontend.vercel.app",
     // MCP_MAIL_BASE_URL: "https://localhost:8001",
