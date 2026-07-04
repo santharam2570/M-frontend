@@ -860,6 +860,33 @@ function getAssignedToIdFromLead(raw: Lead & Record<string, unknown>): string {
   return ""
 }
 
+function getCompanyNameFromLead(raw: Lead & Record<string, unknown>): string {
+  const fromCompanyName =
+    getNamesFromApiField(raw.company_name) ||
+    (typeof raw.company_name === "string" ? raw.company_name.trim() : "")
+  if (fromCompanyName) return fromCompanyName
+
+  const fromProjectName =
+    getNamesFromApiField(raw.project_name) ||
+    (typeof raw.project_name === "string" ? raw.project_name.trim() : "")
+  if (fromProjectName) return fromProjectName
+
+  const companyRef = raw.company
+  if (companyRef != null && companyRef !== "") {
+    const fromCompanyRef =
+      getNamesFromApiField(companyRef) ||
+      (typeof companyRef === "string" ? companyRef.trim() : "")
+    if (fromCompanyRef) return fromCompanyRef
+  }
+
+  const leadType = String(raw.lead_type ?? "").trim().toLowerCase()
+  if (leadType === "company") return ""
+
+  const nameValue =
+    getNamesFromApiField(raw.name) || (typeof raw.name === "string" ? raw.name.trim() : "")
+  return nameValue
+}
+
 function getAssignedToNameFromLead(raw: Lead & Record<string, unknown>): string {
   if (typeof raw.assigned_to_name === "string" && raw.assigned_to_name.trim()) {
     return raw.assigned_to_name.trim()
@@ -1245,6 +1272,7 @@ const normalizeLead = (lead: Lead): Lead => {
 
   return {
     ...raw,
+    company_name: getCompanyNameFromLead(normalizedRaw),
     location: locationValue || raw.location,
     latest_notes: getLatestNotesDisplayValue(raw) || raw.latest_notes || null,
     customer_requirement: customerRequirementIds,
@@ -1335,6 +1363,8 @@ function getLeadFieldValue(lead: Lead, key: string): unknown {
       return lead.source_name ?? lead.source
     case "latest_notes":
       return getLatestNotesDisplayValue(lead)
+    case "company_name":
+      return getCompanyNameFromLead(lead as Lead & Record<string, unknown>)
     case "next_followup":
       return hasFollowupDate(lead.next_followup_dates?.[0])
         ? formatFollowupDateDisplay(lead.next_followup_dates![0].date)

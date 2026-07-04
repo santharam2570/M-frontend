@@ -39,6 +39,8 @@ export const URLS = {
   PROJECT_SITE_VISITS: `${BASE_URL}/project_site_visits`,
   PROJECT_MATCH_LEADS: `${BASE_URL}/project_match_leads`,
   LEAD_MATCH_PROJECTS: `${BASE_URL}/lead_match_projects`,
+  LEAD_SUGGESTED_PROJECTS: `${BASE_URL}/lead_suggested_projects`,
+  AI_CHAT: `${BASE_URL}/ai_chat`,
   PROJECT_DOCUMENTS: `${BASE_URL}/project_documents`,
 
   BOOKING_LIST: `${BASE_URL}/booking_list`,

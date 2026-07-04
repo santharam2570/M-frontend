@@ -137,8 +137,14 @@ import { CalendarIcon, Loader2 } from "lucide-react"
 import { EditTaskSheet } from "@/components/all-details-followup-tasks/edit-task-sheet"
 import { VISIT_TIME_OPTIONS, fetchActiveTaskUsers, mergeTaskUserLists, normalizeAssociatesUsers } from "@/components/all-lists-followup-tasks/config"
 import { DynamicProductSelector } from "@/components/opportunity-product-selector"
+import { useAiChatContext } from "@/components/ai-chat/ai-chat-context"
+import { SuggestedProjectsCard } from "@/components/lead-detail-page/suggested-projects-card"
 import { fetchLeadMatchedProjects } from "@/lib/projects/project-api"
 import type { MatchedProject } from "@/lib/projects/types"
+import {
+  fetchLeadSuggestedProjects,
+  getStoredLeadSuggestedProjects,
+} from "@/lib/leads/lead-api"
 import React from "react"
 // Move CustomFieldDisplay component outside of the main component
 const CustomFieldDisplay = ({ 
@@ -619,6 +625,18 @@ const getIdsFromApiField = (value: unknown, fallback = ""): string => {
   return fallback
 }
 
+const getIdListFromApiField = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => {
+      if (typeof item === "string" || typeof item === "number") {
+        return String(item).trim()
+      }
+      return getSettingItemIdFromApi(item)
+    })
+    .filter(Boolean)
+}
+
 function resolveLeadSettingId(item: {
   _id?: string | { $oid?: string }
   id?: string | number
@@ -845,6 +863,7 @@ const normalizeLeadDetail = (raw: LeadDetailApiRecord) => {
       String(raw.customer_requirement ?? ""),
     customer_requirement_name: customerRequirementName,
     teams: Array.isArray(raw.teams) ? raw.teams : [],
+    suggested_projects: getIdListFromApiField(raw.suggested_projects),
     industry:
       getIdFromApiField(raw.industry_name, String(raw.industry ?? raw.lead_industry ?? "")) ||
       String(raw.industry ?? raw.lead_industry ?? ""),
@@ -1793,6 +1812,7 @@ export default function LeadDetailPage() {
     customer_requirement: "",
     customer_requirement_name: "",
     teams: [] as string[],
+    suggested_projects: [] as string[],
     project_name: "",
   })
   const [editedDesignation, setEditedDesignation] = useState(leadData.position)
@@ -1894,6 +1914,49 @@ export default function LeadDetailPage() {
     const id = params.id
     return Array.isArray(id) ? id[0] : id
   }, [params.id])
+
+  const { setContext: setAiChatContext } = useAiChatContext()
+
+  useEffect(() => {
+    if (!leadId) {
+      setAiChatContext({ type: "general" })
+      return
+    }
+
+    setAiChatContext({
+      type: "lead",
+      lead: {
+        leadId,
+        leadName: leadData.name,
+        email: leadData.email,
+        phone: leadData.phone,
+        status: leadData.status,
+        stage: leadData.stage,
+        budget: leadData.budget,
+        location: leadData.location,
+        customerRequirement:
+          leadData.customer_requirement_name || leadData.customer_requirement,
+        timeline: leadData.timeline,
+      },
+    })
+
+    return () => {
+      setAiChatContext({ type: "general" })
+    }
+  }, [
+    leadData.budget,
+    leadData.customer_requirement,
+    leadData.customer_requirement_name,
+    leadData.email,
+    leadData.location,
+    leadData.name,
+    leadData.phone,
+    leadData.stage,
+    leadData.status,
+    leadData.timeline,
+    leadId,
+    setAiChatContext,
+  ])
 
   const assignableUsers = useMemo(
     () =>
@@ -2123,6 +2186,32 @@ export default function LeadDetailPage() {
     let cancelled = false
 
     const loadSuggestedProjects = async () => {
+      try {
+        const projectIds = await fetchLeadSuggestedProjects(leadData._id)
+        if (!cancelled) {
+          setLeadData((prev) => ({
+            ...prev,
+            suggested_projects: projectIds,
+          }))
+        }
+      } catch {
+        // Keep values from lead detail or local storage.
+      }
+    }
+
+    void loadSuggestedProjects()
+
+    return () => {
+      cancelled = true
+    }
+  }, [leadData._id])
+
+  useEffect(() => {
+    if (!leadData._id) return
+
+    let cancelled = false
+
+    const loadMatchedProjects = async () => {
       setIsLoadingSuggestedProjects(true)
       try {
         const projects = await fetchLeadMatchedProjects(leadData._id, {
@@ -2144,7 +2233,7 @@ export default function LeadDetailPage() {
       }
     }
 
-    void loadSuggestedProjects()
+    void loadMatchedProjects()
 
     return () => {
       cancelled = true
@@ -2420,9 +2509,15 @@ export default function LeadDetailPage() {
     }
 
     const normalizedLead = normalizeLeadDetail(leadResult.data as LeadDetailApiRecord)
+    const apiSuggestedProjects = normalizedLead.suggested_projects
+    const storedSuggestedProjects = getStoredLeadSuggestedProjects(String(params.id ?? ""))
+    const suggestedProjects =
+      apiSuggestedProjects.length > 0 ? apiSuggestedProjects : storedSuggestedProjects
+
     setLeadData((prev) => ({
       ...prev,
       ...normalizedLead,
+      suggested_projects: suggestedProjects,
     }))
   }
 
@@ -4830,37 +4925,15 @@ export default function LeadDetailPage() {
             </div>
 
             <div className="w-full xl:w-[280px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar space-y-4">
-              <Card className={leadDetailCardClassName}>
-                <CardContent className="p-5">
-                  <h3 className={cn(leadDetailSectionTitleClassName, "mb-4")}>Suggested Project</h3>
-                  <div className="space-y-2">
-                    {isLoadingSuggestedProjects ? (
-                      <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading projects...
-                      </div>
-                    ) : suggestedProjects.length === 0 ? (
-                      <p className={cn(leadDetailBodyMutedClassName, "rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center")}>
-                        No matching projects found.
-                      </p>
-                    ) : (
-                      suggestedProjects.map((project) => (
-                        <div
-                          key={project._id}
-                          className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2.5"
-                        >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
-                            <Building className="h-4 w-4" />
-                          </div>
-                          <span className="text-base font-semibold uppercase tracking-wide text-slate-900">
-                            {project.name}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+
+
+              <SuggestedProjectsCard
+                leadId={leadId ?? ""}
+                selectedProjectIds={leadData.suggested_projects ?? []}
+                onSelectedProjectIdsChange={(projectIds) =>
+                  setLeadData((prev) => ({ ...prev, suggested_projects: projectIds }))
+                }
+              />
 
               <Card className={leadDetailCardClassName}>
                 <CardContent className="p-5">
@@ -5015,6 +5088,39 @@ export default function LeadDetailPage() {
                   )}
                 </CardContent>
               </Card>
+
+              <Card className={leadDetailCardClassName}>
+                <CardContent className="p-5">
+                  <h3 className={cn(leadDetailSectionTitleClassName, "mb-4")}>Matching Projects</h3>
+                  <div className="space-y-2">
+                    {isLoadingSuggestedProjects ? (
+                      <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading projects...
+                      </div>
+                    ) : suggestedProjects.length === 0 ? (
+                      <p className={cn(leadDetailBodyMutedClassName, "rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center")}>
+                        No matching projects found.
+                      </p>
+                    ) : (
+                      suggestedProjects.map((project) => (
+                        <div
+                          key={project._id}
+                          className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2.5"
+                        >
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
+                            <Building className="h-4 w-4" />
+                          </div>
+                          <span className="text-base font-semibold uppercase tracking-wide text-slate-900">
+                            {project.name}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
             </div>
           </div>
         </div>

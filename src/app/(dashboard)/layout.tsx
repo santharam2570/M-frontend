@@ -6,6 +6,7 @@ import dynamic from "next/dynamic"
 import { X } from "lucide-react"
 import { Toaster } from "sonner"
 
+import { AiChatProvider } from "@/components/ai-chat/ai-chat-context"
 import { AppSidebar } from "@/components/app-sidebar"
 import { Header } from "@/components/header-layout/header"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,13 @@ const Calculator = dynamic(
   () =>
     import("@/components/header-layout/calculator").then(
       (mod) => mod.Calculator
+    ),
+  { ssr: false }
+)
+const AiAssistantWidget = dynamic(
+  () =>
+    import("@/components/ai-chat/ai-assistant-widget").then(
+      (mod) => mod.AiAssistantWidget
     ),
   { ssr: false }
 )
@@ -210,6 +218,8 @@ function DashboardChrome({ children }: { children: ReactNode }) {
       {showCalculator && (
         <Calculator onClose={() => setShowCalculator(false)} />
       )}
+
+      <AiAssistantWidget />
     </>
   )
 }
@@ -218,7 +228,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider>
       <NotificationProvider>
-        <DashboardChrome>{children}</DashboardChrome>
+        <AiChatProvider>
+          <DashboardChrome>{children}</DashboardChrome>
+        </AiChatProvider>
       </NotificationProvider>
     </ThemeProvider>
   )

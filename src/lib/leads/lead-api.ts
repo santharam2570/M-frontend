@@ -113,3 +113,103 @@ export async function fetchLeadMetrics(
 
   return metrics
 }
+
+function getLeadAuthHeaders(token?: string | null): Record<string, string> {
+  const authToken = token ?? getAuthToken()
+  if (!authToken) {
+    throw new Error("Authentication required")
+  }
+
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${authToken}`,
+  }
+}
+
+const SUGGESTED_PROJECTS_STORAGE_KEY = "map_lead_suggested_projects"
+
+function readSuggestedProjectsStorage(): Record<string, string[]> {
+  if (typeof window === "undefined") return {}
+
+  try {
+    const raw = localStorage.getItem(SUGGESTED_PROJECTS_STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, string[]>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeSuggestedProjectsStorage(data: Record<string, string[]>): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(SUGGESTED_PROJECTS_STORAGE_KEY, JSON.stringify(data))
+}
+
+export function getStoredLeadSuggestedProjects(leadId: string): string[] {
+  if (!leadId) return []
+  const stored = readSuggestedProjectsStorage()[leadId]
+  return Array.isArray(stored) ? stored.filter(Boolean) : []
+}
+
+export function setStoredLeadSuggestedProjects(leadId: string, projectIds: string[]): void {
+  if (!leadId) return
+  const next = readSuggestedProjectsStorage()
+  next[leadId] = projectIds
+  writeSuggestedProjectsStorage(next)
+}
+
+export async function fetchLeadSuggestedProjects(
+  leadId: string,
+  token?: string,
+): Promise<string[]> {
+  const authToken = token ?? getAuthToken()
+  if (!authToken || !leadId) {
+    return getStoredLeadSuggestedProjects(leadId)
+  }
+
+  try {
+    const response = await fetch(`${URLS.LEAD_SUGGESTED_PROJECTS}/${leadId}`, {
+      method: "GET",
+      headers: getLeadAuthHeaders(authToken),
+      cache: "no-store",
+    })
+
+    const result = await parseJsonResponse<{ code?: number; data?: unknown }>(response)
+    if (Number(result.code) === 200 && Array.isArray(result.data)) {
+      const projectIds = result.data.map((id) => String(id)).filter(Boolean)
+      setStoredLeadSuggestedProjects(leadId, projectIds)
+      return projectIds
+    }
+  } catch {
+    // Fall back to browser storage below.
+  }
+
+  return getStoredLeadSuggestedProjects(leadId)
+}
+
+export async function updateLeadSuggestedProjects(
+  leadId: string,
+  projectIds: string[],
+  token?: string,
+): Promise<void> {
+  if (!leadId) {
+    throw new Error("Lead id is required")
+  }
+
+  setStoredLeadSuggestedProjects(leadId, projectIds)
+
+  const authToken = token ?? getAuthToken()
+  if (!authToken) {
+    throw new Error("Authentication required")
+  }
+
+  const response = await fetch(`${URLS.LEAD_SUGGESTED_PROJECTS}/${leadId}`, {
+    method: "PUT",
+    headers: getLeadAuthHeaders(authToken),
+    body: JSON.stringify({ suggested_projects: projectIds }),
+  })
+
+  const result = await parseJsonResponse<{ code?: number; msg?: string }>(response)
+  if (Number(result.code) !== 200) {
+    throw new Error(result.msg || "Failed to update suggested projects")
+  }
+}

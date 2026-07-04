@@ -30,6 +30,7 @@ const COLUMN_ALIAS_TO_CANONICAL: Record<string, string> = {
   source: "source_name",
   status: "lead_status_name",
   lead_status: "lead_status_name",
+  company: "company_name",
 }
 
 export function normalizeColumnKey(key: string): string {

@@ -285,7 +285,11 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
         description: result.msg || "Lead has been created",
       })
 
-      onSave?.(result.data)
+      onSave?.({
+        ...(result.data ?? {}),
+        ...buildLeadPayload(data),
+        _id: result.data?._id ?? result.data?.id,
+      })
       onLeadAdded?.()
 
       onOpenChange(false)
