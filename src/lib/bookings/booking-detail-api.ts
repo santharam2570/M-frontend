@@ -9,10 +9,28 @@ import type { BookingFormValues } from "@/components/booking-detail-page/booking
 import { BASE_URL } from "@/config/environment"
 import URLS from "@/config/urls"
 import { parseJsonResponse } from "@/lib/api"
-import { fetchProjectDetail, fetchProjectUnits } from "@/lib/projects/project-api"
+import { fetchProjectUnits } from "@/lib/projects/project-api"
 import type { ProjectUnit } from "@/lib/projects/types"
 
 const PROJECT_BOOKING_UNITS_URL = `${BASE_URL}/project_booking_units`
+
+/** React Query key for a unit's booking detail snapshot. */
+export function bookingDetailSnapshotQueryKey(projectId: string, unitId: string) {
+  return ["booking-detail-snapshot", projectId, unitId] as const
+}
+
+/** Lightweight unit context seeded from the list before detail receipts load. */
+export function bookingUnitSeedQueryKey(projectId: string, unitId: string) {
+  return ["booking-unit-seed", projectId, unitId] as const
+}
+
+/** Prefer cached snapshot when fresher than this; avoid remount network storms. */
+export const BOOKING_DETAIL_STALE_MS = 60_000
+
+export type BookingDetailSnapshotOptions = {
+  /** Unit context already known from the list/project page — skips unit list APIs. */
+  seedUnit?: BookingUnitContext | null
+}
 
 type RawRecord = Record<string, unknown>
 
@@ -248,30 +266,146 @@ export async function fetchBookingsForUnit(
   return { receipts, summary }
 }
 
+function enrichUnitFromReceipts(
+  unit: BookingUnitContext,
+  receipts: BookingDetailRecord[],
+): BookingUnitContext {
+  const primary = receipts[0]
+  if (!primary) return unit
+
+  return {
+    ...unit,
+    project_name: unit.project_name || primary.project_name || unit.project_name,
+    unit_no: unit.unit_no || primary.unit_no || unit.unit_no,
+    customer_name: unit.customer_name || primary.customer_name || undefined,
+    linked_booking_id: unit.linked_booking_id || primary._id || undefined,
+  }
+}
+
+function unitFromSeedOrReceipts(
+  projectId: string,
+  unitId: string,
+  seedUnit: BookingUnitContext | null | undefined,
+  receipts: BookingDetailRecord[],
+): BookingUnitContext | null {
+  const primary = receipts[0]
+  const projectName =
+    seedUnit?.project_name || primary?.project_name || "Selected project"
+
+  if (seedUnit?._id) {
+    return enrichUnitFromReceipts(
+      {
+        ...seedUnit,
+        project_id: seedUnit.project_id || projectId,
+        project_name: seedUnit.project_name || projectName,
+      },
+      receipts,
+    )
+  }
+
+  if (!primary) return null
+
+  return {
+    _id: unitId,
+    project_id: primary.project_id || projectId,
+    project_name: projectName,
+    unit_no: primary.unit_no || "",
+    customer_name: primary.customer_name || undefined,
+    linked_booking_id: primary._id || undefined,
+  }
+}
+
+async function resolveUnitContext(
+  projectId: string,
+  unitId: string,
+  token: string,
+  receipts: BookingDetailRecord[],
+  seedUnit?: BookingUnitContext | null,
+): Promise<BookingUnitContext> {
+  const fromSeedOrReceipts = unitFromSeedOrReceipts(
+    projectId,
+    unitId,
+    seedUnit,
+    receipts,
+  )
+
+  // Seed + receipts is enough for the detail view; skip expensive project-wide unit lists.
+  if (fromSeedOrReceipts?.unit_no && fromSeedOrReceipts.project_name) {
+    return fromSeedOrReceipts
+  }
+
+  const projectNameHint =
+    fromSeedOrReceipts?.project_name ||
+    receipts[0]?.project_name ||
+    "Selected project"
+
+  const bookingUnitItems = await fetchBookingUnitsRaw(projectId, token).catch(
+    () => [] as RawRecord[],
+  )
+  const fromBookingApi =
+    bookingUnitItems
+      .map((item) => normalizeUnit(item, projectId, projectNameHint))
+      .find((unit) => unit._id === unitId) ?? null
+
+  if (fromBookingApi) {
+    const seed = fromSeedOrReceipts
+    return enrichUnitFromReceipts(
+      {
+        ...fromBookingApi,
+        project_name:
+          fromBookingApi.project_name || seed?.project_name || projectNameHint,
+        unit_no: fromBookingApi.unit_no || seed?.unit_no || "",
+        area_sqft: fromBookingApi.area_sqft ?? seed?.area_sqft,
+        area_cents: fromBookingApi.area_cents ?? seed?.area_cents,
+        customer_name: fromBookingApi.customer_name || seed?.customer_name,
+        linked_lead_id: fromBookingApi.linked_lead_id || seed?.linked_lead_id,
+        linked_booking_id:
+          fromBookingApi.linked_booking_id || seed?.linked_booking_id,
+      },
+      receipts,
+    )
+  }
+
+  // Last resort: full project units list (only when booking-units didn't include the unit).
+  const projectUnits = await fetchProjectUnits(projectId, token)
+  const projectUnit = projectUnits.find((unit) => unit._id === unitId)
+  const unit = mergeUnitContext(
+    fromBookingApi ?? fromSeedOrReceipts,
+    projectUnit,
+    projectId,
+    projectNameHint,
+  )
+
+  if (!unit) {
+    throw new Error("Unit not found")
+  }
+
+  return enrichUnitFromReceipts(unit, receipts)
+}
+
+/**
+ * Loads booking detail with a minimal network footprint.
+ *
+ * Typical paths:
+ * - List → detail with seedUnit: **1 call** (`booking_list`)
+ * - Deep link / refresh: **1–2 calls** (receipts, then unit lookup only if needed)
+ *
+ * Previously always fired 4 parallel calls (project detail + all units + booking units + receipts).
+ */
 export async function fetchBookingDetailSnapshot(
   projectId: string,
   unitId: string,
   token: string,
+  options?: BookingDetailSnapshotOptions,
 ): Promise<BookingDetailSnapshot> {
-  const [project, projectUnits, bookingUnitItems, bookingsResult] = await Promise.all([
-    fetchProjectDetail(projectId, token),
-    fetchProjectUnits(projectId, token),
-    fetchBookingUnitsRaw(projectId, token).catch(() => [] as RawRecord[]),
-    fetchBookingsForUnit(projectId, unitId, token),
-  ])
-
-  const projectName = project.name || "Selected project"
-
-  const fromBookingApi =
-    bookingUnitItems
-      .map((item) => normalizeUnit(item, projectId, projectName))
-      .find((unit) => unit._id === unitId) ?? null
-
-  const projectUnit = projectUnits.find((unit) => unit._id === unitId)
-  const unit = mergeUnitContext(fromBookingApi, projectUnit, projectId, projectName)
-  if (!unit) {
-    throw new Error("Unit not found")
-  }
+  const bookingsResult = await fetchBookingsForUnit(projectId, unitId, token)
+  const unit = await resolveUnitContext(
+    projectId,
+    unitId,
+    token,
+    bookingsResult.receipts,
+    options?.seedUnit,
+  )
 
   return {
     unit,

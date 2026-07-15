@@ -232,7 +232,7 @@ export function TwoStepForm() {
       }
 
       clearPendingAuth();
-      router.push("/lead");
+      router.push("/dashboard");
     } catch (err) {
       setError(
         err instanceof AuthApiError

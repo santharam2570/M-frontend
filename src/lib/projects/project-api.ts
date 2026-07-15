@@ -1,18 +1,29 @@
 import URLS from "@/config/urls"
 import { parseJsonResponse } from "@/lib/api"
-import type {
-  LeadMatchCriteria,
-  MatchedLead,
-  MatchedProject,
-  Project,
-  ProjectDocument,
-  ProjectFilterState,
-  ProjectMetrics,
-  ProjectStatus,
-  ProjectUnit,
-  PropertyType,
-  ReraStatus,
-  SiteVisit,
+import {
+  fetchBranches,
+  filterBranchesForUser,
+  getRoleTier,
+  getStoredAuthUser,
+  hasAllBranchAccess,
+} from "@/lib/auth"
+import { resolveBranchObjectId } from "@/lib/branches/branch-id"
+import {
+  PROJECT_STATUS_LABELS,
+  PROPERTY_TYPE_LABELS,
+  EMPTY_PROJECT_FILTERS,
+  type LeadMatchCriteria,
+  type MatchedLead,
+  type MatchedProject,
+  type Project,
+  type ProjectDocument,
+  type ProjectFilterState,
+  type ProjectMetrics,
+  type ProjectStatus,
+  type ProjectUnit,
+  type PropertyType,
+  type ReraStatus,
+  type SiteVisit,
 } from "./types"
 
 interface ApiEnvelope<T> {
@@ -78,6 +89,7 @@ export interface ProjectSettingItem {
   name?: string
   color?: string
   default?: number
+  create_date?: string
 }
 
 export interface ProjectSettingOption {
@@ -88,6 +100,20 @@ export interface ProjectSettingOption {
 }
 
 export type ProjectSettingsListData = Partial<Record<ProjectSettingType, ProjectSettingItem[]>>
+
+const PROJECT_SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000
+
+let projectSettingsInflight: Promise<ProjectSettingsListData> | null = null
+let projectSettingsCache: {
+  data: ProjectSettingsListData
+  fetchedAt: number
+  token: string
+} | null = null
+
+export function invalidateProjectSettingsCache(): void {
+  projectSettingsInflight = null
+  projectSettingsCache = null
+}
 
 export function resolveProjectSettingId(item: ProjectSettingItem): string {
   if (item._id && typeof item._id === "object" && item._id.$oid) {
@@ -110,18 +136,42 @@ export function mapProjectSettingsToOptions(
     }))
 }
 
+/**
+ * Fetches project settings once and shares the result across concurrent
+ * callers (unit status, project status, RERA, etc.) for TTL minutes.
+ */
 export async function fetchProjectSettingsListApi(
   token?: string,
 ): Promise<ProjectSettingsListData> {
   const authToken = token ?? getProjectAuthToken()
+  const now = Date.now()
 
-  const response = await fetch(URLS.PROJECT_SETTINGS_LIST, {
-    method: "GET",
-    headers: projectAuthHeaders(authToken),
+  if (
+    projectSettingsCache &&
+    projectSettingsCache.token === authToken &&
+    now - projectSettingsCache.fetchedAt < PROJECT_SETTINGS_CACHE_TTL_MS
+  ) {
+    return projectSettingsCache.data
+  }
+
+  if (projectSettingsInflight) {
+    return projectSettingsInflight
+  }
+
+  projectSettingsInflight = (async () => {
+    const response = await fetch(URLS.PROJECT_SETTINGS_LIST, {
+      method: "GET",
+      headers: projectAuthHeaders(authToken),
+    })
+
+    const data = (await readProjectResponse<ProjectSettingsListData>(response)) ?? {}
+    projectSettingsCache = { data, fetchedAt: Date.now(), token: authToken }
+    return data
+  })().finally(() => {
+    projectSettingsInflight = null
   })
 
-  const data = await readProjectResponse<ProjectSettingsListData>(response)
-  return data ?? {}
+  return projectSettingsInflight
 }
 
 export async function fetchUnitStatusOptionsApi(
@@ -129,6 +179,137 @@ export async function fetchUnitStatusOptionsApi(
 ): Promise<ProjectSettingOption[]> {
   const settings = await fetchProjectSettingsListApi(token)
   return mapProjectSettingsToOptions(settings.unit_status)
+}
+
+export async function fetchProjectStatusOptionsApi(
+  token?: string,
+): Promise<ProjectSettingOption[]> {
+  const settings = await fetchProjectSettingsListApi(token)
+  return mapProjectSettingsToOptions(settings.project_status)
+}
+
+export async function fetchProjectReraOptionsApi(
+  token?: string,
+): Promise<ProjectSettingOption[]> {
+  const settings = await fetchProjectSettingsListApi(token)
+  return mapProjectSettingsToOptions(settings.rera_status)
+}
+
+export async function fetchProjectPropertyTypeOptionsApi(
+  token?: string,
+): Promise<ProjectSettingOption[]> {
+  const settings = await fetchProjectSettingsListApi(token)
+  const fromSettings = mapProjectSettingsToOptions(settings.property_type)
+  if (fromSettings.length > 0) return fromSettings
+
+  return (Object.entries(PROPERTY_TYPE_LABELS) as [string, string][]).map(([value, label]) => ({
+    value,
+    label,
+    color: "#64748b",
+  }))
+}
+
+export interface ProjectFilterOptions {
+  statusOptions: ProjectSettingOption[]
+  reraOptions: ProjectSettingOption[]
+  propertyTypeOptions: ProjectSettingOption[]
+  locationOptions: string[]
+  branchOptions: Array<{ value: string; label: string }>
+}
+
+export async function fetchProjectFilterOptionsApi(params?: {
+  token?: string
+  orgId?: number
+}): Promise<ProjectFilterOptions> {
+  const token = params?.token ?? getProjectAuthToken()
+  const settings = await fetchProjectSettingsListApi(token)
+
+  const statusOptions = mapProjectSettingsToOptions(settings.project_status)
+  const reraOptions = mapProjectSettingsToOptions(settings.rera_status)
+  const fromPropertySettings = mapProjectSettingsToOptions(settings.property_type)
+  const propertyTypeOptions =
+    fromPropertySettings.length > 0
+      ? fromPropertySettings
+      : (Object.entries(PROPERTY_TYPE_LABELS) as [string, string][]).map(([value, label]) => ({
+          value,
+          label,
+          color: "#64748b",
+        }))
+
+  const { projects } = await fetchProjectList({
+    token,
+    search: "",
+    page: 1,
+    length: 500,
+    filters: EMPTY_PROJECT_FILTERS,
+  })
+
+  const locationOptions = [
+    ...new Set(
+      projects
+        .map((project) => project.area_locality.trim())
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b))
+
+  let branchOptions: Array<{ value: string; label: string }> = []
+  try {
+    const storedUser = getStoredAuthUser()
+    const orgId = params?.orgId
+    if (orgId) {
+      const branches = await fetchBranches(orgId, token, {
+        all: hasAllBranchAccess(getRoleTier(storedUser)),
+      })
+      branchOptions = filterBranchesForUser(branches, storedUser)
+        .filter((branch) => branch.status === "active")
+        .map((branch) => ({ value: branch.id, label: branch.name }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    }
+  } catch {
+    branchOptions = []
+  }
+
+  return {
+    statusOptions,
+    reraOptions,
+    propertyTypeOptions,
+    locationOptions,
+    branchOptions,
+  }
+}
+
+export function resolveProjectStatusOption(
+  status: string,
+  options: ProjectSettingOption[],
+): ProjectSettingOption | undefined {
+  if (!status) return undefined
+
+  const byValue = options.find((option) => option.value === status)
+  if (byValue) return byValue
+
+  const normalized = status.toLowerCase().trim()
+  return options.find((option) => option.label.toLowerCase().trim() === normalized)
+}
+
+export function getProjectStatusLabel(
+  status: string,
+  options: ProjectSettingOption[] = [],
+): string {
+  const option = resolveProjectStatusOption(status, options)
+  if (option?.label) return option.label
+
+  const known = PROJECT_STATUS_LABELS[status as ProjectStatus]
+  if (known) return known
+
+  return status
+}
+
+export function isActiveProjectStatus(
+  status: string,
+  options: ProjectSettingOption[] = [],
+): boolean {
+  const label = getProjectStatusLabel(status, options).toLowerCase().trim()
+  return label === "active" || status.toLowerCase().trim() === "active"
 }
 
 export function resolveProjectId(value: unknown): string {
@@ -215,7 +396,7 @@ function normalizePropertyTypes(value: unknown): PropertyType[] {
 function normalizeUnit(raw: RawRecord): ProjectUnit {
   return {
     _id: resolveProjectId(raw._id ?? raw.id),
-    unit_no: String(raw.unit_no ?? raw.name ?? ""),
+    unit_no: String(raw.unit_no ?? raw.plot_no ?? raw.plot_number ?? raw.name ?? ""),
     block: raw.block ? String(raw.block) : undefined,
     property_type: (raw.property_type as PropertyType) ?? "plot",
     area_sqft: raw.area_sqft != null ? toNumber(raw.area_sqft) : undefined,
@@ -257,6 +438,12 @@ export function coerceProjectUnits(value: unknown): ProjectUnit[] {
     }
     if (Array.isArray(record.list)) {
       return coerceProjectUnits(record.list)
+    }
+    if (Array.isArray(record.records)) {
+      return coerceProjectUnits(record.records)
+    }
+    if (Array.isArray(record.items)) {
+      return coerceProjectUnits(record.items)
     }
     if (record.unit_no != null || record._id != null || record.id != null) {
       return [normalizeUnit(record)]
@@ -456,35 +643,23 @@ export async function fetchLeadMatchedProjects(
   leadId: string,
   criteria: LeadMatchCriteria = {},
   token?: string,
+  options?: {
+    /** Prefer a shared/cached project list to avoid duplicate 500-row fetches. */
+    getProjects?: () => Promise<Project[]>
+  },
 ): Promise<MatchedProject[]> {
+  // Backend has no /lead_match_projects route — match against project_list locally.
+  void leadId
   const authToken = token ?? getProjectAuthToken()
 
-  try {
-    const response = await fetch(
-      `${URLS.LEAD_MATCH_PROJECTS}?lead_id=${encodeURIComponent(leadId)}`,
-      {
-        method: "GET",
-        headers: projectAuthHeaders(authToken),
-      },
-    )
-
-    if (response.ok) {
-      const payload = await parseJsonResponse<ApiEnvelope<unknown>>(response)
-      if (payload.code === 200) {
-        const items = Array.isArray(payload.data) ? payload.data : []
-        if (items.length > 0) {
-          return items.map((item) => normalizeMatchedProject(item as RawRecord))
-        }
-      }
-    }
-  } catch {
-    // Fall back to client-side matching below.
-  }
-
-  const { projects } = await fetchProjectList({
-    token: authToken,
-    length: 500,
-  })
+  const projects = options?.getProjects
+    ? await options.getProjects()
+    : (
+        await fetchProjectList({
+          token: authToken,
+          length: 500,
+        })
+      ).projects
 
   return matchProjectsForLead(projects, criteria)
 }
@@ -531,6 +706,7 @@ export function normalizeProject(raw: RawRecord, index = 0): Project {
     name: String(raw.name ?? ""),
     location: String(raw.location ?? raw.city ?? ""),
     area_locality: String(raw.area_locality ?? raw.locality ?? ""),
+    branch_id: resolveBranchObjectId(raw.branch_id ?? raw.branchId) || undefined,
     card_color:
       raw.card_color != null && String(raw.card_color).trim()
         ? String(raw.card_color).trim()
@@ -661,6 +837,16 @@ export function reorderProjectsList(projects: Project[], orderedIds: string[]): 
   })
 }
 
+function deduplicateProjectsById(projects: Project[]): Project[] {
+  const seen = new Set<string>()
+
+  return projects.filter((project) => {
+    if (!project._id || seen.has(project._id)) return false
+    seen.add(project._id)
+    return true
+  })
+}
+
 function normalizeProjectList(data: unknown): Project[] {
   const items = Array.isArray(data)
     ? data
@@ -668,30 +854,44 @@ function normalizeProjectList(data: unknown): Project[] {
       ? ((data as RawRecord).projects as unknown[])
       : []
 
-  return applyStoredProjectColors(
-    applyStoredProjectOrder(
-      sortProjectsByOrder(
-        items.map((item, index) => normalizeProject(item as RawRecord, index)),
+  return deduplicateProjectsById(
+    applyStoredProjectColors(
+      applyStoredProjectOrder(
+        sortProjectsByOrder(
+          items.map((item, index) => normalizeProject(item as RawRecord, index)),
+        ),
       ),
     ),
   )
 }
 
 function normalizeProjectMetrics(data: unknown): ProjectMetrics {
-  const raw = (data ?? {}) as RawRecord
+  const wrapped = (data ?? {}) as RawRecord
+  const raw =
+    wrapped.metrics && typeof wrapped.metrics === "object"
+      ? (wrapped.metrics as RawRecord)
+      : wrapped
 
   return {
-    total_projects: toNumber(raw.total_projects),
+    total_projects: toNumber(raw.total_projects ?? raw.total),
     active_projects: toNumber(raw.active_projects),
     total_units: toNumber(raw.total_units),
     available_units: toNumber(raw.available_units),
-    site_visits_this_week: toNumber(raw.site_visits_this_week),
+    site_visits_this_week: toNumber(
+      raw.site_visits_this_week ??
+        raw.site_visits_week ??
+        raw.site_visit_this_week ??
+        raw.visits_this_week,
+    ),
   }
 }
 
 function buildProjectListFilters(filters: ProjectFilterState) {
   const apiFilters: Array<{ field: string; selected_values: string[] }> = []
 
+  if (filters.branch_id) {
+    apiFilters.push({ field: "branch_id", selected_values: [filters.branch_id] })
+  }
   if (filters.status) {
     apiFilters.push({ field: "status", selected_values: [filters.status] })
   }
@@ -699,7 +899,8 @@ function buildProjectListFilters(filters: ProjectFilterState) {
     apiFilters.push({ field: "area_locality", selected_values: [filters.location] })
   }
   if (filters.property_type) {
-    apiFilters.push({ field: "property_types", selected_values: [filters.property_type] })
+    // Backend accepts both property_type and property_types
+    apiFilters.push({ field: "property_type", selected_values: [filters.property_type] })
   }
   if (filters.rera_status) {
     apiFilters.push({ field: "rera_status", selected_values: [filters.rera_status] })
@@ -846,11 +1047,44 @@ export async function fetchProjectUnits(
       headers: projectAuthHeaders(authToken),
     })
 
-    const data = await readProjectResponse<unknown>(response)
-    return coerceProjectUnits(data)
+    const payload = await parseJsonResponse<ApiEnvelope<unknown>>(response)
+
+    if (payload.code === 200) {
+      const fromData = coerceProjectUnits(payload.data)
+      if (fromData.length > 0) return fromData
+    }
+
+    return coerceProjectUnits(payload)
   } catch {
     return []
   }
+}
+
+export async function fetchResolvedProjectUnits(
+  projectId: string,
+  options?: {
+    embeddedUnits?: unknown
+    token?: string
+  },
+): Promise<ProjectUnit[]> {
+  const embedded = coerceProjectUnits(options?.embeddedUnits)
+  if (embedded.length > 0) return embedded
+
+  const [unitsResult, detailResult] = await Promise.allSettled([
+    fetchProjectUnits(projectId, options?.token),
+    fetchProjectDetail(projectId, options?.token),
+  ])
+
+  const fromUnitsApi =
+    unitsResult.status === "fulfilled" ? unitsResult.value : []
+  if (fromUnitsApi.length > 0) return fromUnitsApi
+
+  if (detailResult.status === "fulfilled") {
+    const fromDetail = coerceProjectUnits(detailResult.value.units)
+    if (fromDetail.length > 0) return fromDetail
+  }
+
+  return []
 }
 
 export interface CreateProjectUnitPayload {

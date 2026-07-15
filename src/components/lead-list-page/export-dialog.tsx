@@ -4,10 +4,10 @@ import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { FileSpreadsheet, FileText, FileType } from "lucide-react"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupOption } from "@/components/ui/radio-group"
 import URLS from "@/config/urls"
 import { useToast } from "@/hooks/use-toast"
+import { useLeadPermissions } from "@/hooks/useLeadPermissions"
 
 interface ExportDialogProps {
   open: boolean
@@ -18,7 +18,8 @@ interface ExportDialogProps {
 export function ExportDialog({ open, onOpenChange, totalRecords }: ExportDialogProps) {
   const [selectedFormat, setSelectedFormat] = useState<"excel" | "csv" | "pdf">("excel")
   const [isExporting, setIsExporting] = useState(false)
-  const { toast } = useToast();
+  const { toast } = useToast()
+  const { canExportLead } = useLeadPermissions()
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -34,6 +35,15 @@ export function ExportDialog({ open, onOpenChange, totalRecords }: ExportDialogP
   }, [])
 
   const handleExport = async () => {
+    if (!canExportLead) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to export leads.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsExporting(true)
     try {
       const storedData = localStorage.getItem('map_user')
@@ -100,44 +110,27 @@ export function ExportDialog({ open, onOpenChange, totalRecords }: ExportDialogP
           </p>
 
           <RadioGroup value={selectedFormat} onValueChange={(value) => setSelectedFormat(value as any)}>
-            {/* <div className="flex items-start space-x-3 space-y-0 mb-4 border rounded-md p-3 hover:bg-muted/50">
-              <RadioGroupItem value="excel" id="excel" className="mt-1" />
-              <div className="flex-1">
-                <Label htmlFor="excel" className="flex items-center text-sm font-medium">
-                  <FileSpreadsheet className="h-4 w-4 mr-2 text-green-600" />
-                  Excel (.xlsx)
-                </Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Export to Microsoft Excel format for data analysis and filtering
-                </p>
-              </div>
-            </div> */}
-
-            <div className="flex items-start space-x-3 space-y-0 mb-4 border rounded-md p-3 hover:bg-muted/50">
-              <RadioGroupItem value="csv" id="csv" className="mt-1" />
-              <div className="flex-1">
-                <Label htmlFor="csv" className="flex items-center text-sm font-medium">
-                  <FileText className="h-4 w-4 mr-2 text-primary" />
-                  CSV (.csv)
-                </Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Export to CSV format for compatibility with most spreadsheet applications
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3 space-y-0 border rounded-md p-3 hover:bg-muted/50">
-              <RadioGroupItem value="pdf" id="pdf" className="mt-1" />
-              <div className="flex-1">
-                <Label htmlFor="pdf" className="flex items-center text-sm font-medium">
-                  <FileType className="h-4 w-4 mr-2 text-red-600" />
-                  PDF (.pdf)
-                </Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Export to PDF format for printing or sharing as a document
-                </p>
-              </div>
-            </div>
+            <RadioGroupOption
+              value="excel"
+              id="excel"
+              title="Excel (.xlsx)"
+              description="Export to Microsoft Excel format for data analysis and filtering"
+              icon={<FileSpreadsheet className="h-4 w-4 text-green-600" />}
+            />
+            <RadioGroupOption
+              value="csv"
+              id="csv"
+              title="CSV (.csv)"
+              description="Export to CSV format for compatibility with most spreadsheet applications"
+              icon={<FileText className="h-4 w-4 text-primary" />}
+            />
+            <RadioGroupOption
+              value="pdf"
+              id="pdf"
+              title="PDF (.pdf)"
+              description="Export to PDF format for printing or sharing as a document"
+              icon={<FileType className="h-4 w-4 text-red-600" />}
+            />
           </RadioGroup>
         </div>
 
@@ -145,7 +138,7 @@ export function ExportDialog({ open, onOpenChange, totalRecords }: ExportDialogP
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isExporting}>
             Cancel
           </Button>
-          <Button onClick={handleExport} disabled={isExporting}>
+          <Button onClick={handleExport} disabled={isExporting || !canExportLead}>
             {isExporting ? "Exporting..." : "Export"}
           </Button>
         </DialogFooter>

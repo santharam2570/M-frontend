@@ -20,6 +20,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  leadDetailDashedEmptyClassName,
+  leadDetailTableRowClassName,
+  leadDetailTableWrapClassName,
+} from "@/lib/form-field-styles"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 
@@ -131,10 +136,10 @@ export function BookingsListTable({
         {headerAction}
       </div>
 
-      <div className={isMobile ? "space-y-3" : "overflow-auto rounded-lg border border-slate-200/80 bg-white"}>
+      <div className={isMobile ? "space-y-3" : leadDetailTableWrapClassName}>
         {isMobile ? (
           bookings.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-muted-foreground">
+            <div className={cn(leadDetailDashedEmptyClassName, "px-4 py-12")}>
               No bookings found.
             </div>
           ) : (
@@ -250,10 +255,10 @@ export function BookingsListTable({
               bookings.map((booking) => (
                 <TableRow
                   key={booking._id}
-                  className="group cursor-pointer even:bg-slate-50/40 hover:bg-muted/50"
+                  className={cn("group cursor-pointer", leadDetailTableRowClassName)}
                   onClick={() => onBookingClick?.(booking)}
                 >
-                  <TableCell className="px-4 py-3 text-sm font-medium text-slate-900">
+                  <TableCell className="px-4 py-3 text-sm font-medium text-foreground">
                     <Link
                       href={getBookingDetailHref(booking)}
                       className="text-primary hover:text-primary/80 hover:underline"

@@ -47,9 +47,9 @@ const propertyTypeOptions = Object.entries(PROPERTY_TYPE_LABELS).map(([value, la
 }))
 
 const rowInputClassName =
-  "h-8 border-slate-200 bg-white px-2 text-sm shadow-none focus-visible:ring-1"
+  "h-8 border-border bg-background px-2 text-sm shadow-none focus-visible:ring-1"
 const rowSelectTriggerClassName =
-  "h-8 w-full border-slate-200 bg-white px-2 text-sm shadow-none focus-visible:ring-1"
+  "h-8 w-full border-border bg-background px-2 text-sm shadow-none focus-visible:ring-1"
 
 interface UnitTableRowProps {
   projectId?: string
@@ -462,7 +462,7 @@ export function UnitTableRow({
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:bg-slate-100"
+              className="h-8 w-8 text-muted-foreground hover:bg-muted"
               disabled={isSaving}
               onClick={onCancelEdit}
             >

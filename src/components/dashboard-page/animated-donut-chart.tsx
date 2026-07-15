@@ -65,15 +65,17 @@ function describeArc(
 export function AnimatedDonutChart({
   data,
   className,
-  size = 320,
-  strokeWidth = 40,
+  size = 220,
+  strokeWidth = 32,
   animationDurationMs = 1200,
 }: AnimatedDonutChartProps) {
   const [progress, setProgress] = useState(0)
-  const isLarge = size >= 300
   const total = data.reduce((sum, item) => sum + item.value, 0)
+  const labelPadding = 28
+  const canvasSize = size + labelPadding * 2
+  const center = canvasSize / 2
   const radius = (size - strokeWidth) / 2
-  const center = size / 2
+  const labelRadius = radius + strokeWidth / 2 + 14
 
   useEffect(() => {
     let frame = 0
@@ -100,127 +102,130 @@ export function AnimatedDonutChart({
       const segmentAngle = total > 0 ? (segment.value / total) * 360 : 0
       const startAngle = angle
       angle += segmentAngle
+      const midAngle = startAngle + segmentAngle / 2
+      const labelPosition = polarToCartesian(center, center, labelRadius, midAngle)
 
       return {
         ...segment,
         segmentAngle,
         startAngle,
-        percentage: total > 0 ? Math.round((segment.value / total) * 100) : 0,
+        labelPosition,
+        percentage: total > 0 ? ((segment.value / total) * 100).toFixed(1) : "0.0",
       }
     })
-  }, [data, total])
+  }, [center, data, labelRadius, total])
 
   return (
-    <div className={cn("flex flex-col items-center", isLarge ? "gap-8" : "gap-5", className)}>
-      <div className="relative" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="rotate-[-90deg]">
-          <circle
-            cx={center}
-            cy={center}
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={strokeWidth}
-            className="text-muted/50"
-          />
-          {segments.map((segment) => {
-            const animatedAngle = segment.segmentAngle * progress
+    <div
+      className={cn(
+        "flex w-full flex-col items-center justify-center gap-8 lg:flex-row lg:items-center lg:gap-10 xl:gap-14",
+        className,
+      )}
+    >
+      <div
+        className="relative shrink-0 overflow-visible"
+        style={{ width: canvasSize, height: canvasSize }}
+      >
+        <svg
+          width={canvasSize}
+          height={canvasSize}
+          viewBox={`0 0 ${canvasSize} ${canvasSize}`}
+          className="overflow-visible"
+        >
+          <g className="rotate-[-90deg]" style={{ transformOrigin: `${center}px ${center}px` }}>
+            <circle
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={strokeWidth}
+              className="text-muted/35"
+            />
+            {segments.map((segment) => {
+              const animatedAngle = segment.segmentAngle * progress
+              if (animatedAngle <= 0) return null
 
-            if (animatedAngle <= 0) return null
+              const endAngle = segment.startAngle + animatedAngle
 
-            const endAngle = segment.startAngle + animatedAngle
-
-            return (
-              <Tooltip key={segment.label}>
-                <TooltipTrigger asChild>
-                  <g className="cursor-pointer outline-none">
-                    <path
-                      d={describeArc(center, center, radius, segment.startAngle, endAngle)}
-                      fill="none"
-                      stroke="transparent"
-                      strokeWidth={strokeWidth + 16}
-                      strokeLinecap="butt"
-                      style={{ opacity: progress > 0 ? 1 : 0 }}
-                    />
-                    <path
-                      d={describeArc(center, center, radius, segment.startAngle, endAngle)}
-                      fill="none"
-                      stroke={segment.color}
-                      strokeWidth={strokeWidth}
-                      strokeLinecap="butt"
-                      className="pointer-events-none transition-opacity duration-300"
-                      style={{
-                        opacity: progress > 0 ? 1 : 0,
-                      }}
-                    />
-                  </g>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={8}>
-                  <div className="space-y-0.5 text-center">
-                    <p className="font-medium">{segment.label}</p>
-                    <p className="tabular-nums">
-                      {segment.value.toLocaleString("en-IN")} leads ({segment.percentage}%)
-                    </p>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            )
-          })}
+              return (
+                <Tooltip key={segment.label}>
+                  <TooltipTrigger asChild>
+                    <g className="cursor-pointer outline-none">
+                      <path
+                        d={describeArc(center, center, radius, segment.startAngle, endAngle)}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={strokeWidth + 14}
+                        strokeLinecap="butt"
+                      />
+                      <path
+                        d={describeArc(center, center, radius, segment.startAngle, endAngle)}
+                        fill="none"
+                        stroke={segment.color}
+                        strokeWidth={strokeWidth}
+                        strokeLinecap="butt"
+                        style={{ opacity: progress > 0 ? 1 : 0 }}
+                      />
+                    </g>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={8}>
+                    <div className="space-y-0.5 text-center">
+                      <p className="font-medium">{segment.label}</p>
+                      <p className="tabular-nums">
+                        {segment.percentage}% of total leads
+                      </p>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              )
+            })}
+          </g>
         </svg>
 
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-          <p
-            className={cn(
-              "font-bold tabular-nums text-primary",
-              isLarge ? "text-4xl" : "text-3xl",
-            )}
+        {segments.map((segment) => (
+          <span
+            key={`${segment.label}-label`}
+            className="pointer-events-none absolute text-[10px] font-semibold tabular-nums text-foreground sm:text-[11px]"
+            style={{
+              left: segment.labelPosition.x,
+              top: segment.labelPosition.y,
+              transform: "translate(-50%, -50%)",
+              opacity: progress,
+            }}
           >
-            {Math.round(total * progress).toLocaleString("en-IN")}
-          </p>
-          <p
-            className={cn(
-              "font-medium uppercase tracking-wide text-muted-foreground",
-              isLarge ? "text-sm" : "text-xs",
-            )}
-          >
-            Total Leads
-          </p>
-        </div>
+            {segment.percentage}%
+          </span>
+        ))}
       </div>
 
-      <div
-        className={cn(
-          "grid w-full gap-x-5 gap-y-3",
-          isLarge ? "grid-cols-2 text-base sm:grid-cols-3" : "grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3",
-        )}
-      >
+      <div className="flex w-full max-w-[240px] flex-col justify-center gap-3.5 lg:max-w-[200px] lg:gap-4">
         {segments.map((segment, index) => (
           <Tooltip key={segment.label}>
             <TooltipTrigger asChild>
               <div
-                className="flex cursor-default items-center gap-2 rounded-md px-1 py-0.5 text-sm transition-colors hover:bg-muted/60"
+                className="flex items-center gap-3 text-sm"
                 style={{
                   opacity: progress,
-                  transform: `translateY(${(1 - progress) * 8}px)`,
-                  transitionDelay: `${index * 80}ms`,
+                  transform: `translateX(${(1 - progress) * 6}px)`,
+                  transitionDelay: `${index * 70}ms`,
                 }}
               >
                 <span
-                  className={cn(
-                    "shrink-0 rounded-full",
-                    isLarge ? "h-3 w-3" : "h-2.5 w-2.5",
-                  )}
+                  className="h-3 w-3 shrink-0 rounded-full"
                   style={{ backgroundColor: segment.color }}
                 />
-                <span className="truncate text-muted-foreground">{segment.label}</span>
-                <span className="ml-auto font-semibold tabular-nums">{segment.percentage}%</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  {segment.label}
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums text-foreground">
+                  {segment.percentage}%
+                </span>
               </div>
             </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={6}>
+            <TooltipContent side="right" sideOffset={6}>
               <p className="font-medium">{segment.label}</p>
-              <p className="tabular-nums">
-                {segment.value.toLocaleString("en-IN")} leads · {segment.percentage}% of total
-              </p>
+              <p className="tabular-nums">{segment.percentage}% of total leads</p>
             </TooltipContent>
           </Tooltip>
         ))}

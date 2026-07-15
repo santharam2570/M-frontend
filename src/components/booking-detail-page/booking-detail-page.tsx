@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useEffect, useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Plus } from "lucide-react"
 
 import {
   BookingDetailTable,
@@ -10,15 +11,20 @@ import {
 } from "./booking-detail-table"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
+import { useBookingPermissions } from "@/hooks/useBookingPermissions"
 import { getApiErrorMessage } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import {
+  BOOKING_DETAIL_STALE_MS,
+  bookingDetailSnapshotQueryKey,
+  bookingUnitSeedQueryKey,
   createBooking,
   fetchBookingDetailSnapshot,
   fetchBookingsForUnit,
   type BookingDetailSnapshot,
   updateBooking,
 } from "@/lib/bookings/booking-detail-api"
-import { Plus } from "lucide-react"
+import { leadDetailDashedEmptyClassName } from "@/lib/form-field-styles"
 
 import {
   amountInWordsInr,
@@ -50,23 +56,63 @@ export default function BookingDetailPage({
 }: BookingDetailPageProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const {
+    canViewBookings,
+    canAddBooking,
+    canEditBooking,
+    isLoading: isPermissionsLoading,
+  } = useBookingPermissions()
 
-  const snapshotKey = useMemo(
-    () => ["booking-detail-snapshot", projectId, unitId] as const,
-    [projectId, unitId],
-  )
+  const snapshotKey = bookingDetailSnapshotQueryKey(projectId, unitId)
+  const seedKey = bookingUnitSeedQueryKey(projectId, unitId)
 
-  const cachedDetail = queryClient.getQueryData<BookingDetailSnapshot>(snapshotKey)
-
-  const [unit, setUnit] = useState<BookingUnitContext | null>(cachedDetail?.unit ?? null)
-  const [receipts, setReceipts] = useState<BookingDetailRecord[]>(cachedDetail?.receipts ?? [])
-  const [receiptSummary, setReceiptSummary] = useState<BookingReceiptSummary | null>(
-    cachedDetail?.summary ?? null,
-  )
-  const [isLoading, setIsLoading] = useState(!cachedDetail)
   const [isSaving, setIsSaving] = useState(false)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [editingBooking, setEditingBooking] = useState<BookingDetailRecord | null>(null)
+
+  const {
+    data: snapshot,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
+    error,
+  } = useQuery({
+    queryKey: snapshotKey,
+    enabled: Boolean(projectId && unitId),
+    staleTime: BOOKING_DETAIL_STALE_MS,
+    placeholderData: () => {
+      const seed = queryClient.getQueryData<BookingUnitContext>(seedKey)
+      if (!seed) return undefined
+      return { unit: seed, receipts: [], summary: null }
+    },
+    queryFn: async (): Promise<BookingDetailSnapshot> => {
+      const token = getAuthToken()
+      if (!token) {
+        throw new Error("You are not logged in. Please sign in again.")
+      }
+
+      const cached = queryClient.getQueryData<BookingDetailSnapshot>(snapshotKey)
+      const seed = queryClient.getQueryData<BookingUnitContext>(seedKey)
+      return fetchBookingDetailSnapshot(projectId, unitId, token, {
+        seedUnit: seed ?? cached?.unit ?? null,
+      })
+    },
+  })
+
+  const isDetailLoading = isLoading || (isPlaceholderData && isFetching)
+
+  useEffect(() => {
+    if (!error) return
+    toast({
+      title: "Error",
+      description: getApiErrorMessage(error, "Failed to load booking details."),
+      variant: "destructive",
+    })
+  }, [error, toast])
+
+  const unit = snapshot?.unit ?? null
+  const receipts = snapshot?.receipts ?? []
+  const receiptSummary: BookingReceiptSummary | null = snapshot?.summary ?? null
 
   const formInitialValues = useMemo(() => {
     if (!unit) {
@@ -101,77 +147,33 @@ export default function BookingDetailPage({
     }
   }, [receipts, unit])
 
-  const loadData = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const token = getAuthToken()
-      if (!token || !projectId || !unitId) {
-        setUnit(null)
-        setReceipts([])
-        setReceiptSummary(null)
-        setIsLoading(false)
-        return
-      }
-
-      if (!options?.silent) {
-        setIsLoading(true)
-      }
-
-      try {
-        const snapshot = await fetchBookingDetailSnapshot(projectId, unitId, token)
-        setUnit(snapshot.unit)
-        setReceipts(snapshot.receipts)
-        setReceiptSummary(snapshot.summary)
-      } catch (error) {
-        if (!options?.silent) {
-          setUnit(null)
-          setReceipts([])
-          setReceiptSummary(null)
-          toast({
-            title: "Error",
-            description: getApiErrorMessage(error, "Failed to load booking details."),
-            variant: "destructive",
-          })
-        }
-      } finally {
-        if (!options?.silent) {
-          setIsLoading(false)
-        }
-      }
-    },
-    [projectId, toast, unitId],
-  )
-
-  useEffect(() => {
-    const snapshot = queryClient.getQueryData<BookingDetailSnapshot>(snapshotKey)
-    if (snapshot) {
-      setUnit(snapshot.unit)
-      setReceipts(snapshot.receipts)
-      setReceiptSummary(snapshot.summary)
-      setIsLoading(false)
-      void loadData({ silent: true })
-      return
-    }
-
-    setUnit(null)
-    setReceipts([])
-    setReceiptSummary(null)
-    void loadData()
-  }, [loadData, queryClient, snapshotKey])
-
-  useEffect(() => {
-    if (isLoading || !unit) return
-    queryClient.setQueryData<BookingDetailSnapshot>(snapshotKey, {
-      unit,
-      receipts,
-      summary: receiptSummary,
-    })
-  }, [isLoading, queryClient, receiptSummary, receipts, snapshotKey, unit])
+  const updateSnapshot = (
+    updater: (current: BookingDetailSnapshot | undefined) => BookingDetailSnapshot | undefined,
+  ) => {
+    queryClient.setQueryData<BookingDetailSnapshot>(snapshotKey, updater)
+  }
 
   const handleBookingSubmit = async (values: BookingFormValues) => {
     const token = getAuthToken()
     if (!token || !unit) return
 
     const isUpdate = Boolean(editingBooking?._id)
+    if (isUpdate && !canEditBooking) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to edit bookings.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!isUpdate && !canAddBooking) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to add bookings.",
+        variant: "destructive",
+      })
+      return
+    }
 
     setIsSaving(true)
     try {
@@ -189,22 +191,22 @@ export default function BookingDetailPage({
         saved = await createBooking(values, saveContext, token)
       }
 
-      setUnit((current) =>
-        current
-          ? {
-              ...current,
-              linked_booking_id: saved._id || current.linked_booking_id,
-            }
-          : current,
-      )
-
+      // Only refresh receipts for this unit — never re-fetch project-wide unit lists.
       const { receipts: refreshedReceipts, summary: refreshedSummary } = await fetchBookingsForUnit(
         projectId,
         unitId,
         token,
       )
-      setReceipts(refreshedReceipts)
-      setReceiptSummary(refreshedSummary)
+
+      updateSnapshot((current) => ({
+        unit: {
+          ...(current?.unit ?? unit),
+          linked_booking_id: saved._id || current?.unit.linked_booking_id || unit.linked_booking_id,
+        },
+        receipts: refreshedReceipts,
+        summary: refreshedSummary,
+      }))
+
       setEditingBooking(null)
       toast({
         title: isUpdate ? "Payment updated" : receipts.length > 0 ? "Payment added" : "Booking created",
@@ -227,13 +229,23 @@ export default function BookingDetailPage({
     }
   }
 
-  if (!unit && !isLoading) {
+  if (!isPermissionsLoading && !canViewBookings) {
     return (
-      <div className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-muted-foreground">
+      <div className={cn(leadDetailDashedEmptyClassName, "px-6 py-12")}>
+        You don&apos;t have permission to view bookings.
+      </div>
+    )
+  }
+
+  if (!unit && !isDetailLoading) {
+    return (
+      <div className={cn(leadDetailDashedEmptyClassName, "px-6 py-12")}>
         Booking unit details are unavailable.
       </div>
     )
   }
+
+  const canShowAddButton = Boolean(unit) && canAddBooking
 
   return (
     <>
@@ -241,14 +253,18 @@ export default function BookingDetailPage({
         receipts={receipts}
         summary={receiptSummary}
         unitInfo={unitInfo}
-        isLoading={isLoading && !unit}
+        isLoading={isDetailLoading && receipts.length === 0}
         filterLabel={unit ? `${unit.project_name} · Unit ${unit.unit_no}` : undefined}
-        onEdit={(receipt) => {
-          setEditingBooking(receipt)
-          setIsDrawerOpen(true)
-        }}
+        onEdit={
+          canEditBooking
+            ? (receipt) => {
+                setEditingBooking(receipt)
+                setIsDrawerOpen(true)
+              }
+            : undefined
+        }
         headerAction={
-          unit ? (
+          canShowAddButton ? (
             <Button
               type="button"
               className="w-full min-w-0 sm:min-w-[140px] sm:w-auto"
@@ -264,7 +280,7 @@ export default function BookingDetailPage({
         }
       />
 
-      {unit ? (
+      {unit && (canAddBooking || canEditBooking) ? (
         <BookingFormDrawer
           open={isDrawerOpen}
           onOpenChange={(open) => {

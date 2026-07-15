@@ -33,7 +33,6 @@ import {
   themePrimaryButtonSmClassName,
 } from "@/lib/form-field-styles"
 import {
-  ROLE_TIER_LABELS,
   type Branch,
   type RoleTier,
   getOrgIdFromAuth,
@@ -60,14 +59,12 @@ interface FormErrors {
   email: boolean
   phone: boolean
   role: boolean
-  role_tier: boolean
   branch_id: boolean
   messages: {
     name: string
     email: string
     phone: string
     role: string
-    role_tier: string
     branch_id: string
   }
 }
@@ -77,9 +74,8 @@ const emptyFormErrors: FormErrors = {
   email: false,
   phone: false,
   role: false,
-  role_tier: false,
   branch_id: false,
-  messages: { name: "", email: "", phone: "", role: "", role_tier: "", branch_id: "" },
+  messages: { name: "", email: "", phone: "", role: "", branch_id: "" },
 }
 
 interface AddUserDialogProps {
@@ -175,7 +171,6 @@ export function AddUserDialog({
       email: "",
       phone: "",
       role: !formData.role ? "Please select a role" : "",
-      role_tier: !formData.role_tier ? "Please select a role tier" : "",
       branch_id: "",
     }
 
@@ -208,7 +203,6 @@ export function AddUserDialog({
       email: !!errors.email,
       phone: !!errors.phone,
       role: !!errors.role,
-      role_tier: !!errors.role_tier,
       branch_id: !!errors.branch_id,
       messages: errors,
     })
@@ -294,42 +288,6 @@ export function AddUserDialog({
               />
               {formErrors.messages.phone ? (
                 <p className="text-xs text-destructive">{formErrors.messages.phone}</p>
-              ) : null}
-            </div>
-
-            <div className={formModalFieldGroupClassName}>
-              <Label htmlFor="add-user-role-tier" className={formModalLabelClassName}>
-                Role Tier <span className={formModalRequiredClassName}>*</span>
-              </Label>
-              <Select
-                value={formData.role_tier}
-                onValueChange={(value: RoleTier) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    role_tier: value,
-                    branch_id:
-                      value === "super_admin" || value === "admin"
-                        ? undefined
-                        : prev.branch_id ?? defaultBranchId,
-                  }))
-                }
-              >
-                <SelectTrigger
-                  id="add-user-role-tier"
-                  className={cn(formSelectTriggerClassName, formErrors.role_tier && "border-destructive")}
-                >
-                  <SelectValue placeholder="Select role tier" />
-                </SelectTrigger>
-                <FormSelectContent>
-                  {assignableTiers.map((tier) => (
-                    <FormSelectItem key={tier} value={tier}>
-                      {ROLE_TIER_LABELS[tier]}
-                    </FormSelectItem>
-                  ))}
-                </FormSelectContent>
-              </Select>
-              {formErrors.messages.role_tier ? (
-                <p className="text-xs text-destructive">{formErrors.messages.role_tier}</p>
               ) : null}
             </div>
 

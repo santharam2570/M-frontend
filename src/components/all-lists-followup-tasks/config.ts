@@ -3,7 +3,6 @@ import URLS from "@/config/urls"
 export type FollowUpTaskModule =
   | "lead"
   | "company"
-  | "opportunity"
   | "ticket"
   | "installation"
   | "partner"
@@ -72,16 +71,6 @@ export const MODULE_CONFIGS: Record<FollowUpTaskModule, ModuleConfig> = {
     additionalPayload: ({ associateId }) => ({
       company_id: associateId,
     }),
-  },
-  opportunity: {
-    settingsUrl: URLS.COMPANY_SETTINGS_DETAIL,
-    associateTo: "opportunity",
-    duplicateUrl: ({ associateId }) => `${URLS.OPPORTUNITY_ASSOCIATES}/${associateId}`,
-    duplicateDateFormat: "dd/MM/yyyy",
-    additionalPayload: ({ moduleContext }) => {
-      const companyId = moduleContext?.companyId as string | undefined
-      return companyId ? { company_id: companyId } : {}
-    },
   },
   ticket: {
     settingsUrl: URLS.COMPANY_SETTINGS_DETAIL,

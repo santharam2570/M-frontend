@@ -6,7 +6,9 @@ import { Phone, Target, UserPlus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { leadDetailCardClassName, leadDetailDashedEmptyClassName } from "@/lib/form-field-styles"
 import type { MatchedLead } from "@/lib/projects/types"
+import { cn } from "@/lib/utils"
 
 interface MatchedLeadsPanelProps {
   leads: MatchedLead[]
@@ -19,16 +21,16 @@ export function MatchedLeadsPanel({ leads }: MatchedLeadsPanelProps) {
         Leads matched by budget band, preferred location, and property type.
       </p>
       {leads.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+        <div className={leadDetailDashedEmptyClassName}>
           No matching leads found for this project yet.
         </div>
       ) : (
         leads.map((lead) => (
-          <Card key={lead._id} className="border-slate-200/80 shadow-none">
+          <Card key={lead._id} className={cn(leadDetailCardClassName, "shadow-none")}>
             <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-semibold text-slate-900">{lead.name || "Unnamed lead"}</p>
+                  <p className="font-semibold text-foreground">{lead.name || "Unnamed lead"}</p>
                   <Badge className="bg-primary/10 text-primary hover:bg-primary/10">
                     <Target className="mr-1 h-3 w-3" />
                     {lead.match_score}% match

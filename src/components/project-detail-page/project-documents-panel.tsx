@@ -13,6 +13,12 @@ import {
   uploadProjectDocumentApi,
 } from "@/lib/projects/project-api"
 import type { ProjectDocument } from "@/lib/projects/types"
+import {
+  leadDetailCardClassName,
+  leadDetailDashedEmptyClassName,
+  leadDetailIconBoxSmClassName,
+} from "@/lib/form-field-styles"
+import { cn } from "@/lib/utils"
 
 const CATEGORY_LABELS: Record<ProjectDocument["category"], string> = {
   legal: "Legal",
@@ -26,6 +32,8 @@ const CATEGORY_LABELS: Record<ProjectDocument["category"], string> = {
 interface ProjectDocumentsPanelProps {
   projectId: string
   documents: ProjectDocument[]
+  canAddDocument?: boolean
+  canDownloadDocument?: boolean
   onDocumentsCountChange?: (count: number) => void
   onRefresh?: () => void
 }
@@ -44,6 +52,8 @@ function getDocumentUrl(documentPath: string) {
 export function ProjectDocumentsPanel({
   projectId,
   documents,
+  canAddDocument = false,
+  canDownloadDocument = false,
   onDocumentsCountChange,
   onRefresh,
 }: ProjectDocumentsPanelProps) {
@@ -52,13 +62,26 @@ export function ProjectDocumentsPanel({
   const cardInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const [uploadingDocId, setUploadingDocId] = useState<string | null>(null)
   const [isGeneralUploading, setIsGeneralUploading] = useState(false)
+  const lastReportedCountRef = useRef<number | null>(null)
 
   useEffect(() => {
-    onDocumentsCountChange?.(documents.length)
-  }, [documents, onDocumentsCountChange])
+    const count = documents.length
+    if (lastReportedCountRef.current === count) return
+    lastReportedCountRef.current = count
+    onDocumentsCountChange?.(count)
+  }, [documents.length, onDocumentsCountChange])
 
   const handleDocumentUpload = useCallback(
     async (file: File, documentId?: string, category?: ProjectDocument["category"]) => {
+      if (!canAddDocument) {
+        toast({
+          title: "Permission denied",
+          description: "You don't have permission to upload documents.",
+          variant: "destructive",
+        })
+        return
+      }
+
       if (!projectId) {
         toast({
           title: "Error",
@@ -97,10 +120,19 @@ export function ProjectDocumentsPanel({
         setIsGeneralUploading(false)
       }
     },
-    [onRefresh, projectId, toast],
+    [canAddDocument, onRefresh, projectId, toast],
   )
 
   const handleDocumentDownload = async (fileUrl: string, fileName: string) => {
+    if (!canDownloadDocument) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to download documents.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       const response = await fetch(getDocumentUrl(fileUrl))
       const blob = await response.blob()
@@ -135,8 +167,18 @@ export function ProjectDocumentsPanel({
           size="sm"
           variant="outline"
           className="gap-1.5"
-          disabled={isGeneralUploading}
-          onClick={() => generalUploadRef.current?.click()}
+          disabled={isGeneralUploading || !canAddDocument}
+          onClick={() => {
+            if (!canAddDocument) {
+              toast({
+                title: "Permission denied",
+                description: "You don't have permission to upload documents.",
+                variant: "destructive",
+              })
+              return
+            }
+            generalUploadRef.current?.click()
+          }}
         >
           {isGeneralUploading ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -160,7 +202,7 @@ export function ProjectDocumentsPanel({
       </div>
 
       {documents.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+        <div className={leadDetailDashedEmptyClassName}>
           No documents uploaded yet.
         </div>
       ) : (
@@ -169,13 +211,13 @@ export function ProjectDocumentsPanel({
             const isUploading = uploadingDocId === doc._id
 
             return (
-              <Card key={doc._id} className="border-slate-200/80 shadow-none">
+              <Card key={doc._id} className={cn(leadDetailCardClassName, "shadow-none")}>
                 <CardContent className="flex items-start gap-3 p-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-500">
+                  <div className={cn(leadDetailIconBoxSmClassName, "h-10 w-10")}>
                     <FileText className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-slate-900">{doc.name}</p>
+                    <p className="truncate font-medium text-foreground">{doc.name}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <Badge variant="secondary" className="text-[10px] font-normal">
                         {CATEGORY_LABELS[doc.category]}
@@ -192,9 +234,19 @@ export function ProjectDocumentsPanel({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      disabled={isUploading}
+                      disabled={isUploading || !canAddDocument}
                       title="Upload document"
-                      onClick={() => openCardUpload(doc._id)}
+                      onClick={() => {
+                        if (!canAddDocument) {
+                          toast({
+                            title: "Permission denied",
+                            description: "You don't have permission to upload documents.",
+                            variant: "destructive",
+                          })
+                          return
+                        }
+                        openCardUpload(doc._id)
+                      }}
                     >
                       {isUploading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -206,9 +258,17 @@ export function ProjectDocumentsPanel({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      disabled={!doc.file_url}
+                      disabled={!doc.file_url || !canDownloadDocument}
                       title="Download document"
                       onClick={() => {
+                        if (!canDownloadDocument) {
+                          toast({
+                            title: "Permission denied",
+                            description: "You don't have permission to download documents.",
+                            variant: "destructive",
+                          })
+                          return
+                        }
                         if (doc.file_url) {
                           void handleDocumentDownload(doc.file_url, doc.name)
                         }

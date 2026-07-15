@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { format, parse } from "date-fns"
 import {
   CalendarIcon,
@@ -32,10 +33,23 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Calendar } from "@/components/ui/calendar"
-import { URLS } from "@/config/urls"
+import { useLeadPermissions } from "@/hooks/useLeadPermissions"
+import { useUserData } from "@/hooks/useUserData"
+import {
+  filterBranchesForUser,
+  getOrgIdFromAuth,
+  getStoredAuthUser,
+} from "@/lib/auth"
 import { parseDateString } from "@/lib/date-ageing"
 import { cn } from "@/lib/utils"
 import { formSelectTriggerClassName } from "@/lib/form-field-styles"
+import { type AssignableUser } from "@/lib/users/assignable-users"
+import {
+  LEAD_SETTINGS_QUERY_KEY,
+  assignableUsersQueryKey,
+  fetchCachedAssignableUsers,
+  fetchLeadSettingsList,
+} from "@/lib/leads/lead-shared-queries"
 
 interface FilterState {
   [key: string]: string
@@ -47,6 +61,7 @@ interface FilterDefinition {
   type: "dropdown" | "date"
   dependsOn?: string
   dependsOnLabel?: string
+  orgWideOnly?: boolean
 }
 
 interface Option {
@@ -75,7 +90,8 @@ interface FilterDrawerProps {
   initialFilters: FilterState
 }
 
-const FILTER_DEFINITIONS: FilterDefinition[] = [
+const BASE_FILTER_DEFINITIONS: FilterDefinition[] = [
+  { key: "branch_id", name: "Branch", type: "dropdown", orgWideOnly: true },
   { key: "lead_status", name: "Status", type: "dropdown" },
   {
     key: "stage",
@@ -92,11 +108,12 @@ const FILTER_DEFINITIONS: FilterDefinition[] = [
     dependsOn: "customer_type",
     dependsOnLabel: "customer type",
   },
+  { key: "source", name: "Source", type: "dropdown" },
+  { key: "assigned_to", name: "Assigned To", type: "dropdown" },
   { key: "start_date", name: "Start Date", type: "date" },
   { key: "end_date", name: "End Date", type: "date" },
 ]
 
-const VALID_FILTER_KEYS = FILTER_DEFINITIONS.map((def) => def.key)
 const footerButtonClass = "h-10 min-w-[88px] rounded-md px-4 py-2"
 
 // Backend lead_list filters use `stages` (DB field), UI uses `stage`.
@@ -477,50 +494,92 @@ function FilterCombobox({
 }
 
 export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilters }: FilterDrawerProps) {
+  const { userData, canAccessAllBranches } = useLeadPermissions()
+  const { orgId, branches } = useUserData()
+  const queryClient = useQueryClient()
   const [filters, setFilters] = useState<FilterState>(initialFilters)
   const [filterOptions, setFilterOptions] = useState<Record<string, Option[]>>({})
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([])
   const [leadStatusSettings, setLeadStatusSettings] = useState<LeadSettingItem[]>([])
   const [customerTypeSettings, setCustomerTypeSettings] = useState<LeadSettingItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [hasLoadedOptions, setHasLoadedOptions] = useState(false)
+
+  const filterDefinitions = useMemo(
+    () =>
+      BASE_FILTER_DEFINITIONS.filter(
+        (def) => !def.orgWideOnly || canAccessAllBranches,
+      ),
+    [canAccessAllBranches],
+  )
+  const validFilterKeys = useMemo(
+    () => filterDefinitions.map((def) => def.key),
+    [filterDefinitions],
+  )
 
   const fetchFilterOptions = async () => {
     try {
       setIsLoading(true)
-      const storedData = localStorage.getItem("map_user")
-      if (!storedData) return
-
-      const userData = JSON.parse(storedData)
-      const token = userData.access_token
+      const storedUser = getStoredAuthUser() ?? userData
+      const token = storedUser?.access_token as string | undefined
       if (!token) return
 
-      const response = await fetch(URLS.LEAD_SETTINGS_LIST, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      })
+      const resolvedOrgId = orgId || getOrgIdFromAuth(storedUser)
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
+      const [settingsData, users] = await Promise.all([
+        queryClient.fetchQuery({
+          queryKey: LEAD_SETTINGS_QUERY_KEY,
+          queryFn: () => fetchLeadSettingsList(token),
+        }),
+        queryClient
+          .fetchQuery({
+            queryKey: assignableUsersQueryKey(resolvedOrgId),
+            queryFn: () => fetchCachedAssignableUsers(token, resolvedOrgId, storedUser),
+          })
+          .catch(() => [] as AssignableUser[]),
+      ])
 
-      const result = await response.json()
-      if (result?.code === 200 && result.data) {
-        const leadStatuses = [...(result.data.lead_status || [])].sort(
+      const nextOptions: Record<string, Option[]> = {}
+
+      if (settingsData) {
+        const leadStatuses = [...(settingsData.lead_status || [])].sort(
           (a: LeadSettingItem, b: LeadSettingItem) =>
             (Number((a as { sort_order?: number }).sort_order) || 0) -
             (Number((b as { sort_order?: number }).sort_order) || 0),
-        )
-        const customerTypes = result.data.customer_type || []
+        ) as LeadSettingItem[]
+        const customerTypes = (settingsData.customer_type || []) as LeadSettingItem[]
+        const sources = (settingsData.source ||
+          settingsData.lead_source ||
+          []) as LeadSettingItem[]
 
         setLeadStatusSettings(leadStatuses)
         setCustomerTypeSettings(customerTypes)
-        setFilterOptions({
-          lead_status: mapSettingItemsToOptions(leadStatuses),
-          customer_type: mapSettingItemsToOptions(customerTypes),
-        })
+        nextOptions.lead_status = mapSettingItemsToOptions(leadStatuses)
+        nextOptions.customer_type = mapSettingItemsToOptions(customerTypes)
+        nextOptions.source = mapSettingItemsToOptions(sources)
       }
+
+      // Reuse branches from UserDataProvider — avoids another branch_list call.
+      const accessibleBranches = filterBranchesForUser(branches, storedUser).filter(
+        (branch) => branch.status === "active",
+      )
+      nextOptions.branch_id = accessibleBranches.map((branch) => ({
+        _id: branch.id,
+        value: branch.id,
+        label: branch.name,
+      }))
+
+      setAssignableUsers(users)
+      nextOptions.assigned_to = users
+        .map((user) => ({
+          _id: user.id,
+          value: user.id,
+          label: user.name,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+
+      setFilterOptions(nextOptions)
+      setHasLoadedOptions(true)
     } catch (error) {
       console.error("Error fetching filter options:", error)
     } finally {
@@ -528,9 +587,12 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
     }
   }
 
+  // Load filter options only when the drawer opens — not on every lead page mount.
   useEffect(() => {
-    fetchFilterOptions()
-  }, [])
+    if (!open || hasLoadedOptions) return
+    void fetchFilterOptions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- warm once when first opened
+  }, [open, hasLoadedOptions, userData?.access_token, orgId, queryClient, branches])
 
   const stageOptions = useMemo(() => {
     const matchingStatus = findStatusSetting(leadStatusSettings, filters.lead_status)
@@ -544,8 +606,25 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
     return getPurposeOptionsFromCustomerTypeItem(matchingType)
   }, [filters.customer_type, customerTypeSettings])
 
+  const assignedToOptions = useMemo(() => {
+    const selectedBranch = filters.branch_id?.trim()
+    const scopedUsers = selectedBranch
+      ? assignableUsers.filter(
+          (user) => !user.branch_id || user.branch_id === selectedBranch,
+        )
+      : assignableUsers
+
+    return scopedUsers
+      .map((user) => ({
+        _id: user.id,
+        value: user.id,
+        label: user.name,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [assignableUsers, filters.branch_id])
+
   const activeFilterCount = Object.entries(filters).filter(
-    ([key, value]) => Boolean(value?.trim()) && VALID_FILTER_KEYS.includes(key),
+    ([key, value]) => Boolean(value?.trim()) && validFilterKeys.includes(key),
   ).length
 
   const getDisplayLabel = (filterKey: string, value: string) => {
@@ -556,7 +635,9 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
         ? stageOptions
         : filterKey === "purpose"
           ? purposeOptions
-          : filterOptions[filterKey] || []
+          : filterKey === "assigned_to"
+            ? assignedToOptions
+            : filterOptions[filterKey] || []
 
     return findOptionMatch(options, value)?.label || value
   }
@@ -567,6 +648,15 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
     }
     if (field === "customer_type") {
       return findOptionMatch(filterOptions.customer_type || [], value)?.value || value
+    }
+    if (field === "source") {
+      return findOptionMatch(filterOptions.source || [], value)?.value || value
+    }
+    if (field === "branch_id") {
+      return findOptionMatch(filterOptions.branch_id || [], value)?.value || value
+    }
+    if (field === "assigned_to") {
+      return findOptionMatch(assignedToOptions, value)?.value || value
     }
     if (field === "stage") {
       return findOptionMatch(stageOptions, value)?.value || value
@@ -667,10 +757,19 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
         delete newFilters[key]
         if (key === "lead_status") delete newFilters.stage
         if (key === "customer_type") delete newFilters.purpose
+        if (key === "branch_id") delete newFilters.assigned_to
       } else {
         newFilters[key] = value
         if (key === "lead_status") delete newFilters.stage
         if (key === "customer_type") delete newFilters.purpose
+        if (key === "branch_id" && prev.assigned_to) {
+          const stillValid = assignableUsers.some(
+            (user) =>
+              user.id === prev.assigned_to &&
+              (!user.branch_id || user.branch_id === value),
+          )
+          if (!stillValid) delete newFilters.assigned_to
+        }
       }
 
       return newFilters
@@ -691,7 +790,7 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
           key !== "start_date" &&
           key !== "end_date" &&
           value.trim() !== "" &&
-          VALID_FILTER_KEYS.includes(key),
+          validFilterKeys.includes(key),
       )
       .map(([field, value]) => ({
         field: mapUiFieldToApiField(field),
@@ -721,6 +820,7 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
   const getOptionsForFilter = (filterKey: string): Option[] => {
     if (filterKey === "stage") return stageOptions
     if (filterKey === "purpose") return purposeOptions
+    if (filterKey === "assigned_to") return assignedToOptions
     return filterOptions[filterKey] || []
   }
 
@@ -786,7 +886,13 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
       )
     }
 
-    if (filterDef.key === "stage" || filterDef.key === "purpose") {
+    if (
+      filterDef.key === "stage" ||
+      filterDef.key === "purpose" ||
+      filterDef.key === "assigned_to" ||
+      filterDef.key === "source" ||
+      filterDef.key === "branch_id"
+    ) {
       return (
         <div className="space-y-2">
           <Label className="text-sm font-medium text-foreground">{filterDef.name}</Label>
@@ -797,6 +903,7 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
             placeholder={`Select ${filterDef.name.toLowerCase()}`}
             disabled={isDependentDisabled}
             disabledMessage={disabledMessage}
+            searchable={filterDef.key === "assigned_to" || filterDef.key === "source" || filterDef.key === "branch_id"}
             displayLabel={currentValue ? getDisplayLabel(filterDef.key, currentValue) : undefined}
           />
           {!isDependentDisabled && options.length === 0 ? (
@@ -872,14 +979,16 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
               ) : null}
             </SheetTitle>
             <SheetDescription className="text-sm text-muted-foreground">
-              Narrow down your leads by status, stage, customer type, purpose, or created date range.
+              Narrow down your leads by
+              {canAccessAllBranches ? " branch," : ""} status, stage, customer type, purpose,
+              source, assignee, or created date range.
             </SheetDescription>
             <Separator className="mt-4" />
           </SheetHeader>
 
           {activeFilterCount > 0 ? (
             <div className="mb-5 flex flex-wrap gap-2">
-              {FILTER_DEFINITIONS.map((filterDef) => {
+              {filterDefinitions.map((filterDef) => {
                 const value = filters[filterDef.key]
                 if (!value) return null
 
@@ -914,9 +1023,10 @@ export function FilterDrawer({ open, onOpenChange, onApplyFilters, initialFilter
                 <FilterFieldSkeleton />
                 <FilterFieldSkeleton />
                 <FilterFieldSkeleton />
+                {canAccessAllBranches ? <FilterFieldSkeleton /> : null}
               </>
             ) : (
-              FILTER_DEFINITIONS.map((filterDef) => (
+              filterDefinitions.map((filterDef) => (
                 <div key={filterDef.key}>{renderFilterField(filterDef)}</div>
               ))
             )}

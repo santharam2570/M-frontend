@@ -2,7 +2,7 @@
 'use client'
 
 import { 
-  User, Settings, Bell, CreditCard, Lock, Keyboard, 
+  Settings, Bell, CreditCard, Lock, Keyboard, 
   Languages, HelpCircle, Building, Building2, Sliders, Package, 
   Flag, Briefcase, ClipboardList, FileSignature, ShieldCheck,
   Users, Hash, FileText, Mail, MessageCircle, ArrowLeft,
@@ -49,22 +49,13 @@ const settingsData: { navMain: NavSection[] } = {
           url: "/settings/manage-users",
         },
         {
+          title: "Roles & Permissions",
+          url: "/settings/roles-permissions",
+        },
+        {
           title: "Branches",
           url: "/settings/branches",
         },
-        // {
-        //   title: "Teams",
-        //   url: "/settings/teams",
-        // },
-        // {
-        //   title: "Reporting Hierarchy",
-        //   url: "/coming-soon?module=settings-reporting-hierarchy",
-        // },
-
-        // {
-        //   title: "Record Numbering",
-        //   url: "/settings/record-numbering",
-        // },
         {
           title: "Trash",
           url: "/coming-soon?module=settings-trash",
@@ -97,7 +88,7 @@ function BackButton() {
   return (
     <Link
       href="/lead"
-      className="flex items-center gap-2 px-2 py-1 text-sm font-medium text-primary hover:text-primary/80"
+      className="flex items-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       onClick={() => {
         if (isMobile) setOpenMobile(false)
       }}
@@ -159,18 +150,57 @@ function NavMain({ items, onSupportClick }: { items: NavSection[], onSupportClic
 
 export function SettingsSidebar() {
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false)
-  const { canManageBranches, isAuthLoading } = useUserData()
+  const {
+    canManageBranches,
+    canManageRoles,
+    canManageUsers,
+    canAccessSettings,
+    isAuthLoading,
+    hasTier,
+    can,
+  } = useUserData()
 
   const navItems = useMemo(() => {
-    if (isAuthLoading || canManageBranches) {
+    if (isAuthLoading) {
       return settingsData.navMain
     }
 
-    return settingsData.navMain.map((section) => ({
-      ...section,
-      items: section.items.filter((item) => item.url !== "/settings/branches"),
-    }))
-  }, [canManageBranches, isAuthLoading])
+    return settingsData.navMain
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => {
+          if (item.url === "/settings/branches") return canManageBranches
+          if (item.url === "/settings/roles-permissions") return canManageRoles
+          if (item.url === "/settings/manage-users") return canManageUsers
+          if (item.url === "/settings/company-profile") {
+            return (
+              canAccessSettings &&
+              (hasTier("super_admin", "admin") || can("manage_settings") || can("settings"))
+            )
+          }
+          if (item.url === "/settings/lead-settings") {
+            return (
+              hasTier("super_admin", "admin") ||
+              can("manage_lead_settings") ||
+              can("settings")
+            )
+          }
+          if (item.url === "/settings/project-settings") {
+            return hasTier("super_admin", "admin") || can("settings")
+          }
+          return canAccessSettings
+        }),
+      }))
+      .filter((section) => section.items.length > 0)
+  }, [
+    can,
+    canAccessSettings,
+    canManageBranches,
+    canManageRoles,
+    canManageUsers,
+    hasTier,
+    isAuthLoading,
+  ])
 
   const handleSupportClick = () => {
     setIsSupportModalOpen(true)

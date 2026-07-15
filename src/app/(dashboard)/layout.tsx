@@ -92,6 +92,7 @@ function DashboardChrome({ children }: { children: ReactNode }) {
       <Toaster />
       <SidebarProvider
         defaultOpen={true}
+        className="h-svh overflow-hidden"
         style={
           {
             "--sidebar-width": "17.5rem",
@@ -101,7 +102,7 @@ function DashboardChrome({ children }: { children: ReactNode }) {
       >
         <TooltipProvider delayDuration={0}>
           <AppSidebar />
-          <SidebarInset className="min-w-0 overflow-x-hidden">
+          <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
             <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
               <div className="shrink-0">
                 <Header

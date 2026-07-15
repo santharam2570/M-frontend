@@ -50,7 +50,7 @@ interface EditContactDrawerProps {
   companyId?: string
   leadId?: string
   partnerId?: string
-  associateTo?: "company" | "lead" | "partner" | "opportunity" | "partner_request" | "onboarding_partner"
+  associateTo?: "company" | "lead" | "partner" | "partner_request" | "onboarding_partner"
   associateId?: string
 }
 

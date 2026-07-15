@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { BRAND_LOGOS, BRAND_NAME } from "@/config/brand";
 
 export const metadata: Metadata = {
-  title: "MAP Real Estate",
+  title: BRAND_NAME,
   description: "Discover properties, connect with agents, and find your next home.",
+  icons: {
+    icon: BRAND_LOGOS.icon,
+    apple: BRAND_LOGOS.icon,
+  },
 };
 
 export const viewport = {

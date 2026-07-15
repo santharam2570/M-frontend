@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
@@ -12,13 +13,17 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import { MultiSelect } from "@/components/ui/multi-select"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupField } from "@/components/ui/radio-group"
 import { Select, FormSelectContent, FormSelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { Loader2, User } from "lucide-react"
 import URLS from "@/config/urls"
 import { parseJsonResponse } from "@/lib/api"
+import { resolveAuthUserId } from "@/lib/auth"
+import {
+  LEAD_SETTINGS_QUERY_KEY,
+  fetchLeadSettingsList,
+} from "@/lib/leads/lead-shared-queries"
 import { cn } from "@/lib/utils"
 import { formInputClassName, formSelectTriggerClassName, formTextareaClassName } from "@/lib/form-field-styles"
 
@@ -106,6 +111,7 @@ export type AddLeadPayload = {
   lead_type: "individual" | "company"
   company_name?: string
   position?: string
+  assigned_to?: string
 }
 
 interface LeadFormDrawerProps {
@@ -123,7 +129,7 @@ function RequiredLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-function buildLeadPayload(data: LeadFormValues): AddLeadPayload {
+function buildLeadPayload(data: LeadFormValues, userId?: string): AddLeadPayload {
   const basePayload = {
     phone: data.phone.trim(),
     description: data.description.trim(),
@@ -133,6 +139,7 @@ function buildLeadPayload(data: LeadFormValues): AddLeadPayload {
     location: data.location.trim(),
     ...(data.current_staying?.trim() ? { current_staying: data.current_staying.trim() } : {}),
     lead_type: data.lead_type,
+    ...(userId ? { assigned_to: userId } : {}),
   }
 
   if (data.lead_type === "company") {
@@ -166,6 +173,7 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
   const [customerRequirementOptions, setCustomerRequirementOptions] = useState<SelectOption[]>([])
   const [isLoadingOptions, setIsLoadingOptions] = useState(false)
   const { toast } = useToast()
+  const queryClient = useQueryClient()
 
   const validateCompanyName = (value: string): boolean => {
     const companyNameRegex = /^[a-zA-Z0-9\s\.\,\-\'&]*$/
@@ -197,7 +205,7 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
   useEffect(() => {
     if (!open) return
 
-    const fetchLeadSettings = async () => {
+    const loadLeadSettings = async () => {
       setIsLoadingOptions(true)
 
       try {
@@ -208,24 +216,17 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
           throw new Error("You are not logged in. Please sign in again.")
         }
 
-        const response = await fetch(URLS.LEAD_SETTINGS_LIST, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+        const data = await queryClient.fetchQuery({
+          queryKey: LEAD_SETTINGS_QUERY_KEY,
+          queryFn: () => fetchLeadSettingsList(token),
         })
 
-        const result = await parseJsonResponse<{ code?: number; msg?: string; data?: Record<string, LeadSettingItem[]> }>(response)
-
-        if (!response.ok || result.code !== 200) {
-          throw new Error(result.msg || "Failed to load lead settings.")
-        }
-
-        const data = result.data || {}
-
-        setCustomerTypeOptions(mapLeadSettingsToOptions(data.customer_type || []))
-        setCustomerRequirementOptions(mapLeadSettingsToOptions(data.customer_requirement || []))
+        setCustomerTypeOptions(
+          mapLeadSettingsToOptions((data.customer_type || []) as LeadSettingItem[]),
+        )
+        setCustomerRequirementOptions(
+          mapLeadSettingsToOptions((data.customer_requirement || []) as LeadSettingItem[]),
+        )
       } catch (error) {
         setCustomerTypeOptions([])
         setCustomerRequirementOptions([])
@@ -240,8 +241,8 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
       }
     }
 
-    fetchLeadSettings()
-  }, [open, toast])
+    void loadLeadSettings()
+  }, [open, toast, queryClient])
 
   async function onSubmit(data: LeadFormValues) {
     if (companyNameError) {
@@ -258,12 +259,13 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
     try {
       const userData = JSON.parse(localStorage.getItem("map_user") || "{}")
       const token = userData.access_token
+      const currentUserId = resolveAuthUserId(userData)
 
       if (!token) {
         throw new Error("You are not logged in. Please sign in again.")
       }
 
-      const payload = buildLeadPayload(data)
+      const payload = buildLeadPayload(data, currentUserId || undefined)
 
       const response = await fetch(URLS.ADD_LEAD, {
         method: "POST",
@@ -355,21 +357,16 @@ export function LeadFormDrawer({ open, onOpenChange, onSave, onLeadAdded }: Lead
                             form.clearErrors(["lead_name", "designation"])
                           }
                         }}
-                        className="flex items-center gap-6"
+                        orientation="horizontal"
+                        className="w-auto gap-6"
                         disabled={isSubmitting}
                       >
-                        <div className="flex items-center gap-2">
-                          <RadioGroupItem value="individual" id="lead-type-individual" />
-                          <Label htmlFor="lead-type-individual" className="cursor-pointer font-normal">
-                            Individual
-                          </Label>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <RadioGroupItem value="company" id="lead-type-company" />
-                          <Label htmlFor="lead-type-company" className="cursor-pointer font-normal">
-                            Company
-                          </Label>
-                        </div>
+                        <RadioGroupField
+                          value="individual"
+                          id="lead-type-individual"
+                          label="Individual"
+                        />
+                        <RadioGroupField value="company" id="lead-type-company" label="Company" />
                       </RadioGroup>
                     </FormControl>
                     <FormMessage />

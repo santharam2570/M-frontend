@@ -68,7 +68,35 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useLeadPermissions } from "@/hooks/useLeadPermissions"
 import { Card, CardContent } from "@/components/ui/card"
+import {
+  getOrgIdFromAuth,
+  getUserBranchId,
+  type StoredAuthUser,
+} from "@/lib/auth"
+import {
+  buildLeadViewScopeFilters,
+  filterLeadsByViewScope,
+  getCurrentUserIdentity,
+  getTeamUserIdsForBranch,
+  requiresLeadViewScopeFilter,
+  type LeadUserIdentity,
+  type LeadViewScope,
+  type LeadViewScopeFilterOptions,
+} from "@/lib/leads/lead-permissions"
+import {
+  buildUserBranchMap,
+  filterAssignableUsersForLead,
+  mapAssignableUsersToDropdownOptions,
+  type AssignableUser,
+} from "@/lib/users/assignable-users"
+import {
+  LEAD_SETTINGS_QUERY_KEY,
+  assignableUsersQueryKey,
+  fetchCachedAssignableUsers,
+  fetchLeadSettingsList,
+} from "@/lib/leads/lead-shared-queries"
 import {
   type ColumnPref,
   DEFAULT_VISIBLE_KEYS,
@@ -127,12 +155,18 @@ interface CustomFilter {
 }
 
 interface FilterState {
-  lead_status: string
-  customer_type: string
-  source: string
-  assigned_to: string
-  create_date: string
-  create_by: string
+  lead_status?: string
+  stage?: string
+  customer_type?: string
+  purpose?: string
+  source?: string
+  assigned_to?: string
+  branch_id?: string
+  start_date?: string
+  end_date?: string
+  create_date?: string
+  create_by?: string
+  [key: string]: string | undefined
 }
 
 interface LeadsTableProps {
@@ -153,6 +187,16 @@ interface LeadsTableProps {
 }
 
 const PAGE_SIZE = 10
+const TABLE_HEADER_HEIGHT_PX = 56
+const TABLE_ROW_HEIGHT_PX = 56
+const TABLE_COMPACT_HEADER_HEIGHT_PX = 40
+const TABLE_COMPACT_ROW_HEIGHT_PX = 40
+
+function getTableScrollMaxHeight(isCompactView: boolean): number {
+  const headerHeight = isCompactView ? TABLE_COMPACT_HEADER_HEIGHT_PX : TABLE_HEADER_HEIGHT_PX
+  const rowHeight = isCompactView ? TABLE_COMPACT_ROW_HEIGHT_PX : TABLE_ROW_HEIGHT_PX
+  return headerHeight + rowHeight * PAGE_SIZE
+}
 
 // Cached first page for the default (no search / no filter / default sort) view.
 // Lets the table render instantly when navigating back instead of re-fetching
@@ -164,10 +208,17 @@ type CachedDefaultLeads = {
   hasMore: boolean
   fetchedAt: number
 }
-const LEADS_DEFAULT_CACHE_KEY = ["leads", "default-view"] as const
 // How long the cached default view is considered fresh. Within this window,
 // navigating back to the lead list reuses the cached rows without re-fetching.
 const LEADS_DEFAULT_CACHE_TTL = 5 * 60 * 1000
+
+function buildLeadsDefaultCacheKey(
+  viewScope: LeadViewScope,
+  userId?: string,
+  branchId?: string,
+) {
+  return ["leads", "default-view", viewScope, userId ?? "anonymous", branchId ?? "no-branch"] as const
+}
 
 const WRAP_COLUMNS = new Set([
   "name",
@@ -299,111 +350,45 @@ function mapLeadSettingsToDropdownOptions(items: LeadSettingItem[]): LeadDropdow
     .filter((item) => item.value)
 }
 
-function isActiveUserStatus(status: unknown): boolean {
-  if (status === undefined || status === null || status === "") return true
-  const normalized = String(status).trim().toLowerCase()
-  return normalized === "active" || normalized === "1" || normalized === "true"
+async function fetchLeadAssignableUsers(token: string, orgId?: number): Promise<AssignableUser[]> {
+  return fetchCachedAssignableUsers(token, orgId)
 }
 
-function resolveUserId(user: {
-  _id?: string | { $oid?: string }
-  id?: string | number
-  user_id?: string | { $oid?: string }
-}): string {
-  const directId = resolveLeadSettingId(user)
-  if (directId) return directId
-
-  if (user.user_id) {
-    return resolveLeadSettingId({ _id: user.user_id })
-  }
-
-  return ""
-}
-
-function extractUsersFromApiResponse(data: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(data)) {
-    return data as Array<Record<string, unknown>>
-  }
-
-  if (data && typeof data === "object") {
-    const record = data as Record<string, unknown>
-    if (Array.isArray(record.users)) {
-      return record.users as Array<Record<string, unknown>>
-    }
-    if (Array.isArray(record.items)) {
-      return record.items as Array<Record<string, unknown>>
-    }
-  }
-
-  return []
-}
-
-function mapUsersToDropdownOptions(users: Array<Record<string, unknown>>): LeadDropdownOption[] {
-  return users
-    .filter((user) => isActiveUserStatus(user.status))
-    .map((user) => ({
-      value: resolveUserId(
-        user as {
-          _id?: string | { $oid?: string }
-          id?: string | number
-          user_id?: string | { $oid?: string }
-        },
-      ),
-      label: String(user.name ?? user.user_name ?? user.full_name ?? "Unknown User").trim(),
-      color: ASSIGNED_TO_COLOR,
-    }))
-    .filter((user) => user.value && user.label)
-}
-
-async function fetchAssignableUserOptions(token: string): Promise<LeadDropdownOption[]> {
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  }
-
-  for (const endpoint of [URLS.USERS_LIST, URLS.ACTIVE_USERS_LIST]) {
-    try {
-      const response = await fetch(endpoint, { method: "GET", headers })
-      if (!response.ok) continue
-
-      const result = await parseJsonResponse<{ code?: number; data?: unknown } | unknown[]>(response)
-      const users = Array.isArray(result)
-        ? extractUsersFromApiResponse(result)
-        : extractUsersFromApiResponse((result as { data?: unknown }).data)
-      const options = mapUsersToDropdownOptions(users)
-
-      if (options.length > 0) {
-        return options
-      }
-    } catch (error) {
-      console.error(`Error fetching assignable users from ${endpoint}:`, error)
-    }
-  }
-
-  return []
-}
-
-function mergeAssignedToOptions(
-  current: LeadDropdownOption[],
+function mergeAssignableUsersFromLeads(
+  current: AssignableUser[],
   leads: Lead[],
-): LeadDropdownOption[] {
-  const merged = new Map(current.map((option) => [option.value, option]))
+): AssignableUser[] {
+  const merged = new Map(current.map((user) => [user.id, user]))
+  let changed = false
 
   leads.forEach((lead) => {
     const leadRecord = lead as Lead & Record<string, unknown>
-    const value = getAssignedToIdFromLead(leadRecord)
-    const label = getAssignedToNameFromLead(leadRecord)
+    const id = getAssignedToIdFromLead(leadRecord)
+    const name = getAssignedToNameFromLead(leadRecord)
 
-    if (value && label && !merged.has(value)) {
-      merged.set(value, {
-        value,
-        label,
-        color: ASSIGNED_TO_COLOR,
-      })
+    if (!name) return
+
+    if (id && !merged.has(id)) {
+      merged.set(id, { id, name })
+      changed = true
+      return
+    }
+
+    // Legacy rows may only have the assignee display name without an ObjectId.
+    const legacyMatch = Array.from(merged.values()).find(
+      (user) => user.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
+    if (!legacyMatch && !id) {
+      merged.set(name, { id: name, name })
+      changed = true
     }
   })
 
-  return Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label))
+  // Keep the same reference when nothing new was discovered so consumers
+  // (fetchLeads deps / view-scope context) do not thrash and refetch.
+  if (!changed) return current
+
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 function getStageOptionsForLead(
@@ -614,7 +599,13 @@ function leadHasOverdueFollowup(lead: Lead): boolean {
   return followupDate ? isPast(followupDate) && !isToday(followupDate) : false
 }
 
-function applyClientSideFilters(leads: Lead[], filters: LeadListFilter[]): Lead[] {
+function applyClientSideFilters(
+  leads: Lead[],
+  filters: LeadListFilter[],
+  viewScope: LeadViewScope = "all",
+  scopeOptions: LeadViewScopeFilterOptions = { identity: {} },
+  skipViewScopeFilter = false,
+): Lead[] {
   let result = leads
 
   const stageValue = getStageFilterValue(filters)
@@ -629,7 +620,75 @@ function applyClientSideFilters(leads: Lead[], filters: LeadListFilter[]): Lead[
     result = result.filter((lead) => leadMatchesCreateDateRangeFilter(lead, dateRange))
   }
 
-  return result
+  if (skipViewScopeFilter) return result
+
+  return filterLeadsByViewScope(result, viewScope, scopeOptions)
+}
+
+function buildViewScopeApiFilters(
+  viewScope: LeadViewScope,
+  scopeOptions: LeadViewScopeFilterOptions,
+  assignableUsers: AssignableUser[],
+): LeadListFilter[] {
+  const teamUserIds =
+    viewScope === "team"
+      ? getTeamUserIdsForBranch(scopeOptions.branchId, assignableUsers)
+      : undefined
+
+  return buildLeadViewScopeFilters(viewScope, {
+    userId: scopeOptions.identity.id,
+    branchId: scopeOptions.branchId,
+    teamUserIds,
+  })
+}
+
+function mergeLeadListFilters(
+  userFilters: LeadListFilter[],
+  scopeFilters: LeadListFilter[],
+): LeadListFilter[] {
+  if (scopeFilters.length === 0) return userFilters
+  return [...scopeFilters, ...userFilters]
+}
+
+function usesLeadListLocalCount(
+  filters: LeadListFilter[],
+  viewScope: LeadViewScope,
+  isSearching: boolean,
+): boolean {
+  return (
+    Boolean(isSearching) ||
+    hasClientSideFilters(filters) ||
+    hasPostEnrichmentFollowupFilter(filters) ||
+    requiresLeadViewScopeFilter(viewScope)
+  )
+}
+
+function resolveLeadListCounts(options: {
+  viewScope: LeadViewScope
+  usesLocalCount: boolean
+  enrichedLeadsLength: number
+  searchCount?: number
+  totalCount?: number
+}): { searchCount: number; totalCount: number; filteredTotal: number } {
+  const { viewScope, usesLocalCount, enrichedLeadsLength, searchCount, totalCount } = options
+
+  if (usesLocalCount || requiresLeadViewScopeFilter(viewScope)) {
+    return {
+      searchCount: enrichedLeadsLength,
+      totalCount: enrichedLeadsLength,
+      filteredTotal: enrichedLeadsLength,
+    }
+  }
+
+  const resolvedSearchCount = searchCount ?? totalCount ?? enrichedLeadsLength
+  // Prefer the filtered search_count from lead_list over org-wide total_count.
+  const resolvedTotalCount = resolvedSearchCount
+
+  return {
+    searchCount: resolvedSearchCount,
+    totalCount: resolvedTotalCount,
+    filteredTotal: resolvedSearchCount,
+  }
 }
 
 function applyPostEnrichmentFilters(leads: Lead[], filters: LeadListFilter[]): Lead[] {
@@ -662,15 +721,28 @@ function hasPostEnrichmentFollowupFilter(filters: LeadListFilter[]): boolean {
   )
 }
 
-function getLeadListFetchLength(filters: LeadListFilter[], isSearching: boolean): number {
-  if (!isSearching && !hasClientSideFilters(filters) && !hasPostEnrichmentFollowupFilter(filters)) {
+function getLeadListFetchLength(
+  filters: LeadListFilter[],
+  isSearching: boolean,
+  viewScope: LeadViewScope = "all",
+): number {
+  if (
+    !isSearching &&
+    !hasClientSideFilters(filters) &&
+    !hasPostEnrichmentFollowupFilter(filters) &&
+    !requiresLeadViewScopeFilter(viewScope)
+  ) {
     return PAGE_SIZE
   }
   return 100
 }
 
-function shouldDisablePagination(filters: LeadListFilter[], isSearching: boolean): boolean {
-  return Boolean(isSearching) || hasClientSideFilters(filters) || hasPostEnrichmentFollowupFilter(filters)
+function shouldDisablePagination(
+  filters: LeadListFilter[],
+  isSearching: boolean,
+  viewScope: LeadViewScope = "all",
+): boolean {
+  return usesLeadListLocalCount(filters, viewScope, isSearching)
 }
 
 function listShowsFollowupColumn(visibleColumns: ColumnPref[]): boolean {
@@ -844,17 +916,31 @@ function getSettingColorFromApiField(
 }
 
 function getAssignedToIdFromLead(raw: Lead & Record<string, unknown>): string {
+  const assignedLookup = raw.assigned
+  if (Array.isArray(assignedLookup) && assignedLookup.length > 0) {
+    const id = resolveLeadSettingId(
+      assignedLookup[0] as { _id?: string | { $oid?: string }; id?: string | number },
+    )
+    if (id) return id
+  }
+
+  if (typeof raw.assigned_to === "object" && raw.assigned_to !== null) {
+    const id = resolveLeadSettingId(
+      raw.assigned_to as { _id?: string | { $oid?: string }; id?: string | number },
+    )
+    if (id) return id
+  }
+
+  if (typeof raw.assigned === "object" && raw.assigned !== null && !Array.isArray(raw.assigned)) {
+    const id = resolveLeadSettingId(
+      raw.assigned as { _id?: string | { $oid?: string }; id?: string | number },
+    )
+    if (id) return id
+  }
+
   if (typeof raw.assigned_to === "string" && raw.assigned_to.trim()) {
-    return raw.assigned_to.trim()
-  }
-
-  if (typeof raw.assigned_to === "object" && raw.assigned_to !== null && "_id" in raw.assigned_to) {
-    return resolveLeadSettingId(raw.assigned_to as { _id?: string | { $oid?: string }; id?: string | number })
-  }
-
-  const assigned = raw.assigned
-  if (typeof assigned === "object" && assigned !== null && "_id" in assigned) {
-    return resolveLeadSettingId(assigned as { _id?: string | { $oid?: string }; id?: string | number })
+    const value = raw.assigned_to.trim()
+    if (/^[a-f0-9]{24}$/i.test(value)) return value
   }
 
   return ""
@@ -892,6 +978,14 @@ function getAssignedToNameFromLead(raw: Lead & Record<string, unknown>): string 
     return raw.assigned_to_name.trim()
   }
 
+  const assignedLookup = raw.assigned
+  if (Array.isArray(assignedLookup) && assignedLookup.length > 0) {
+    const first = assignedLookup[0]
+    if (typeof first === "object" && first !== null && "name" in first) {
+      return String((first as { name?: string }).name ?? "").trim()
+    }
+  }
+
   if (typeof raw.assigned_to === "object" && raw.assigned_to !== null && "name" in raw.assigned_to) {
     return String((raw.assigned_to as { name?: string }).name ?? "")
   }
@@ -902,6 +996,12 @@ function getAssignedToNameFromLead(raw: Lead & Record<string, unknown>): string 
 
   if (typeof raw.assigned === "string" && raw.assigned.trim()) {
     return raw.assigned.trim()
+  }
+
+  // Legacy API responses stored the display name in assigned_to.
+  if (typeof raw.assigned_to === "string" && raw.assigned_to.trim()) {
+    const value = raw.assigned_to.trim()
+    if (!/^[a-f0-9]{24}$/i.test(value)) return value
   }
 
   return ""
@@ -919,6 +1019,8 @@ function LeadFieldDropdown({
   onChange,
   triggerClassName,
   fallbackColor,
+  displayLabelOverride,
+  readOnly = false,
 }: {
   currentValue?: unknown
   placeholder: string
@@ -926,12 +1028,38 @@ function LeadFieldDropdown({
   onChange: (value: string) => void
   triggerClassName?: string
   fallbackColor?: string
+  displayLabelOverride?: string
+  readOnly?: boolean
 }) {
   const lookupValue = normalizeDropdownLookupValue(currentValue)
   const selectedOption = getLeadDropdownOption(options, currentValue)
-  const displayLabel = selectedOption?.label || lookupValue || placeholder
+  const displayLabel =
+    displayLabelOverride?.trim() ||
+    selectedOption?.label ||
+    lookupValue ||
+    placeholder
   const displayColor = getLeadDropdownColor(options, currentValue, fallbackColor)
-  const hasValue = Boolean(selectedOption || lookupValue)
+  const hasValue = Boolean(displayLabelOverride?.trim() || selectedOption || lookupValue)
+
+  const badge = (
+    <div
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium",
+        hasValue
+          ? "text-white"
+          : "border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground",
+        !readOnly && hasValue && "hover:opacity-90",
+      )}
+      style={hasValue ? { backgroundColor: displayColor } : undefined}
+    >
+      <span className="truncate">{displayLabel}</span>
+      {!readOnly ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : null}
+    </div>
+  )
+
+  if (readOnly) {
+    return badge
+  }
 
   return (
     <DropdownMenu>
@@ -939,18 +1067,7 @@ function LeadFieldDropdown({
         className={cn("w-auto", triggerClassName)}
         onClick={(e) => e.stopPropagation()}
       >
-        <div
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium",
-            hasValue
-              ? "text-white hover:opacity-90"
-              : "border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground"
-          )}
-          style={hasValue ? { backgroundColor: displayColor } : undefined}
-        >
-          <span className="truncate">{displayLabel}</span>
-          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-        </div>
+        {badge}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
@@ -988,12 +1105,18 @@ function LeadStatusDropdown({
   statusOptions,
   onStatusChange,
   triggerClassName,
+  readOnly = false,
 }: {
   lead: Lead
   statusOptions: LeadDropdownOption[]
   onStatusChange: (leadId: string, status: string) => void
   triggerClassName?: string
+  readOnly?: boolean
 }) {
+  const displayLabelOverride =
+    getNamesFromApiField(lead.lead_status_name) ||
+    (typeof lead.lead_status_name === "string" ? lead.lead_status_name : "")
+
   return (
     <LeadFieldDropdown
       currentValue={getLeadSettingDropdownValue(lead, "lead_status", "lead_status_name")}
@@ -1002,6 +1125,8 @@ function LeadStatusDropdown({
       onChange={(value) => onStatusChange(lead._id, value)}
       triggerClassName={triggerClassName}
       fallbackColor={lead.lead_status_color}
+      displayLabelOverride={displayLabelOverride}
+      readOnly={readOnly}
     />
   )
 }
@@ -1011,12 +1136,18 @@ function LeadCustomerTypeDropdown({
   customerTypeOptions,
   onCustomerTypeChange,
   triggerClassName,
+  readOnly = false,
 }: {
   lead: Lead
   customerTypeOptions: LeadDropdownOption[]
   onCustomerTypeChange: (leadId: string, customerType: string) => void
   triggerClassName?: string
+  readOnly?: boolean
 }) {
+  const displayLabelOverride =
+    getNamesFromApiField(lead.customer_type_name) ||
+    (typeof lead.customer_type_name === "string" ? lead.customer_type_name : "")
+
   return (
     <LeadFieldDropdown
       currentValue={getLeadSettingDropdownValue(lead, "customer_type", "customer_type_name")}
@@ -1025,21 +1156,44 @@ function LeadCustomerTypeDropdown({
       onChange={(value) => onCustomerTypeChange(lead._id, value)}
       triggerClassName={triggerClassName}
       fallbackColor={lead.customer_type_color}
+      displayLabelOverride={displayLabelOverride}
+      readOnly={readOnly}
     />
   )
 }
 
 function LeadAssignedToDropdown({
   lead,
-  assignedToOptions,
+  assignableUsers,
+  userBranchMap,
+  authUser,
   onAssignedToChange,
   triggerClassName,
+  readOnly = false,
 }: {
   lead: Lead
-  assignedToOptions: LeadDropdownOption[]
+  assignableUsers: AssignableUser[]
+  userBranchMap: Map<string, string>
+  authUser: StoredAuthUser | null
   onAssignedToChange: (leadId: string, assignedTo: string) => void
   triggerClassName?: string
+  readOnly?: boolean
 }) {
+  const displayLabelOverride = getAssignedToNameFromLead(lead as Lead & Record<string, unknown>)
+  const assignedToOptions = useMemo(
+    () =>
+      mapAssignableUsersToDropdownOptions(
+        filterAssignableUsersForLead(
+          assignableUsers,
+          lead as Lead & Record<string, unknown>,
+          userBranchMap,
+          authUser,
+        ),
+        ASSIGNED_TO_COLOR,
+      ),
+    [assignableUsers, authUser, lead, userBranchMap],
+  )
+
   return (
     <LeadFieldDropdown
       currentValue={getLeadAssignedToValue(lead)}
@@ -1048,6 +1202,8 @@ function LeadAssignedToDropdown({
       onChange={(value) => onAssignedToChange(lead._id, value)}
       triggerClassName={triggerClassName}
       fallbackColor={ASSIGNED_TO_COLOR}
+      displayLabelOverride={displayLabelOverride}
+      readOnly={readOnly}
     />
   )
 }
@@ -1069,16 +1225,19 @@ function LeadStageDropdown({
   leadStatusSettings,
   onStageChange,
   triggerClassName,
+  readOnly = false,
 }: {
   lead: Lead
   leadStatusSettings: LeadSettingItem[]
   onStageChange: (leadId: string, stage: string) => void
   triggerClassName?: string
+  readOnly?: boolean
 }) {
   const stageOptions = useMemo(
     () => getStageOptionsForLead(lead, leadStatusSettings),
     [lead, leadStatusSettings]
   )
+  const displayLabelOverride = getLeadStageValue(lead)
 
   return (
     <LeadFieldDropdown
@@ -1087,6 +1246,8 @@ function LeadStageDropdown({
       options={stageOptions}
       onChange={(value) => onStageChange(lead._id, value)}
       triggerClassName={triggerClassName}
+      displayLabelOverride={displayLabelOverride}
+      readOnly={readOnly}
     />
   )
 }
@@ -1391,8 +1552,21 @@ export function LeadsTable({
   onMetricsRefresh,
 }: LeadsTableProps) {
   const queryClient = useQueryClient()
+  const { userData, viewScope, branchId, canEditLead, canDeleteLead, isLoading: isAuthPermissionsLoading } =
+    useLeadPermissions()
+  const currentUserIdentity = useMemo(
+    () => getCurrentUserIdentity(userData),
+    [userData],
+  )
+  const currentUserId = currentUserIdentity.id
+  const currentUserBranchId = branchId ?? getUserBranchId(userData)
+  const accessToken = userData?.access_token
+  const leadsDefaultCacheKey = useMemo(
+    () => buildLeadsDefaultCacheKey(viewScope, currentUserId, currentUserBranchId),
+    [viewScope, currentUserId, currentUserBranchId],
+  )
   const cachedDefaultLeads = queryClient.getQueryData<CachedDefaultLeads>(
-    LEADS_DEFAULT_CACHE_KEY,
+    leadsDefaultCacheKey,
   )
 
   const [leadsData, setLeadsData] = useState<Lead[]>(
@@ -1415,9 +1589,14 @@ export function LeadsTable({
     onFilteredCountChange?.(searchCount)
   }, [searchCount, onFilteredCountChange])
   const observerTarget = useRef<HTMLDivElement>(null)
+  const tableScrollRef = useRef<HTMLDivElement>(null)
   const isLoadingMoreRef = useRef(false) // Ref to track loading state to prevent duplicate calls
   const leadsDataRef = useRef<Lead[]>(leadsData) // Tracks current rows for spinner decisions
   const fetchAbortRef = useRef<AbortController | null>(null)
+  const currentPageRef = useRef(1)
+  // Prevent auth failures from re-triggering an endless fetch/toast loop.
+  const authFailureRef = useRef(false)
+  const authErrorToastedRef = useRef(false)
   const filterSignature = useMemo(
     () => JSON.stringify(activeCustomFilters),
     [activeCustomFilters],
@@ -1446,7 +1625,33 @@ export function LeadsTable({
   const [leadStatusOptions, setLeadStatusOptions] = useState<LeadDropdownOption[]>([])
   const [customerTypeOptions, setCustomerTypeOptions] = useState<LeadDropdownOption[]>([])
   const [customerRequirementOptions, setCustomerRequirementOptions] = useState<LeadDropdownOption[]>([])
-  const [assignedToOptions, setAssignedToOptions] = useState<LeadDropdownOption[]>([])
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([])
+  const userBranchMap = useMemo(
+    () => buildUserBranchMap(assignableUsers),
+    [assignableUsers],
+  )
+  const viewScopeFilterContext = useMemo<LeadViewScopeFilterOptions>(
+    () => ({
+      identity: currentUserIdentity,
+      branchId: currentUserBranchId,
+      userBranchMap,
+    }),
+    [currentUserIdentity, currentUserBranchId, userBranchMap],
+  )
+  // Refs so list fetches / infinite scroll do not recreate callbacks (and
+  // re-trigger fetchLeads) every time assignees are merged from loaded rows.
+  const assignableUsersRef = useRef(assignableUsers)
+  const viewScopeFilterContextRef = useRef(viewScopeFilterContext)
+  const viewScopeRef = useRef(viewScope)
+  const visibleColumnsRef = useRef(visibleColumns)
+  const hasMoreRef = useRef(hasMore)
+  const loadMoreDataRef = useRef<() => void>(() => {})
+  assignableUsersRef.current = assignableUsers
+  viewScopeFilterContextRef.current = viewScopeFilterContext
+  viewScopeRef.current = viewScope
+  visibleColumnsRef.current = visibleColumns
+  hasMoreRef.current = hasMore
+  currentPageRef.current = currentPage
   const [leadStatusSettings, setLeadStatusSettings] = useState<LeadSettingItem[]>([])
   // Function to handle field updates
   const { addTimelineActivity } = useTimeline()
@@ -1456,22 +1661,27 @@ export function LeadsTable({
     () => buildDisplayColumns(visibleColumns),
     [visibleColumns]
   )
+  const tableScrollMaxHeight = useMemo(
+    () => getTableScrollMaxHeight(isCompactView),
+    [isCompactView],
+  )
 
   // After a full reload the persisted query cache can hydrate slightly after the
   // first render. Re-read cached rows so the table is not stuck empty.
   useEffect(() => {
     if (leadsData.length > 0) return
 
-    const cached = queryClient.getQueryData<CachedDefaultLeads>(LEADS_DEFAULT_CACHE_KEY)
+    const cached = queryClient.getQueryData<CachedDefaultLeads>(leadsDefaultCacheKey)
     if (!cached?.leads?.length) return
 
     setLeadsData(cached.leads)
     setSearchCount(cached.searchCount)
     setTotalCount(cached.totalCount)
     setHasMore(cached.hasMore)
+    currentPageRef.current = 1
     setCurrentPage(1)
     setIsLoading(false)
-  }, [leadsData.length, queryClient, visibleColumns.length])
+  }, [leadsData.length, queryClient, visibleColumns.length, leadsDefaultCacheKey])
 
   const tableMinWidth = useMemo(() => {
     const dataColumnsWidth = displayColumns.reduce(
@@ -1485,12 +1695,12 @@ export function LeadsTable({
   const loadMoreData = useCallback(async () => {
     // Prevent loading more when searching (search results are loaded all at once)
     const isSearching = searchQuery && searchQuery.trim() !== '';
-    if (!hasMore || isLoading || isLoadingMore || isLoadingMoreRef.current || isSearching) return
+    if (!hasMoreRef.current || isLoading || isLoadingMoreRef.current || isSearching) return
 
     try {
       isLoadingMoreRef.current = true
       setIsLoadingMore(true)
-      const nextPage = currentPage + 1
+      const nextPage = currentPageRef.current + 1
       
       // Get current filters from localStorage
       let currentFilters = [];
@@ -1514,9 +1724,23 @@ export function LeadsTable({
         }
       }
 
-      // Combine both filter types
-      const combinedFilters = [...currentFilters, ...currentMetricsFilters];
-      const clientSideFilterActive = hasClientSideFilters(combinedFilters)
+      // Combine user-selected filters with access-scope filters.
+      const scopeOptions = viewScopeFilterContextRef.current
+      const currentViewScope = viewScopeRef.current
+      const scopeFilters = buildViewScopeApiFilters(
+        currentViewScope,
+        scopeOptions,
+        assignableUsersRef.current,
+      )
+      const combinedFilters = mergeLeadListFilters(
+        [...currentFilters, ...currentMetricsFilters],
+        scopeFilters,
+      )
+      const clientSideFilterActive = usesLeadListLocalCount(
+        combinedFilters,
+        currentViewScope,
+        Boolean(searchQuery && searchQuery.trim() !== ""),
+      )
       const postEnrichmentFilterActive = hasPostEnrichmentFollowupFilter(combinedFilters)
 
       const token = JSON.parse(localStorage.getItem('map_user') || '{}').access_token;
@@ -1543,17 +1767,25 @@ export function LeadsTable({
         const newLeads = applyClientSideFilters(
           ((result.data || []) as Lead[]).map(normalizeLead),
           combinedFilters,
+          currentViewScope,
+          scopeOptions,
         )
         const deduplicatedNewLeads = deduplicateLeads(newLeads)
         const enrichedNewLeads = await enrichLeadsForListView(
           deduplicatedNewLeads,
           token,
           combinedFilters,
-          visibleColumns,
+          visibleColumnsRef.current,
         )
         const filteredTotal = clientSideFilterActive || postEnrichmentFilterActive
           ? enrichedNewLeads.length
-          : (result.search_count ?? result.total_count ?? 0)
+          : resolveLeadListCounts({
+              viewScope: currentViewScope,
+              usesLocalCount: false,
+              enrichedLeadsLength: enrichedNewLeads.length,
+              searchCount: result.search_count,
+              totalCount: result.total_count,
+            }).filteredTotal
 
         // If no new leads were returned, we've reached the end
         if (enrichedNewLeads.length === 0) {
@@ -1574,6 +1806,7 @@ export function LeadsTable({
           setHasMore(shouldHaveMore)
           return deduplicated
         })
+        currentPageRef.current = nextPage
         setCurrentPage(nextPage)
         setSearchCount(result.search_count ?? filteredTotal)
         setTotalCount(result.total_count ?? filteredTotal)
@@ -1592,7 +1825,9 @@ export function LeadsTable({
       isLoadingMoreRef.current = false
       setIsLoadingMore(false)
     }
-  }, [currentPage, hasMore, isLoading, isLoadingMore, searchQuery, sortColumn, sortDirection, toast, leadsData.length, visibleColumns])
+  }, [isLoading, searchQuery, sortColumn, sortDirection, toast])
+
+  loadMoreDataRef.current = loadMoreData
 
   // Handle column visibility changes
   const handleColumnVisibility = (updater: any) => {
@@ -1604,6 +1839,12 @@ export function LeadsTable({
 
   // Load initial data and handle filter changes
   const fetchLeads = useCallback(async (options?: { force?: boolean }) => {
+    if (authFailureRef.current && !options?.force) {
+      setIsLoading(false)
+      setIsRefetching(false)
+      return
+    }
+
     fetchAbortRef.current?.abort()
     const abortController = new AbortController()
     fetchAbortRef.current = abortController
@@ -1626,13 +1867,18 @@ export function LeadsTable({
 
       if (!options?.force && isDefaultView) {
         const cached = queryClient.getQueryData<CachedDefaultLeads>(
-          LEADS_DEFAULT_CACHE_KEY,
+          leadsDefaultCacheKey,
         )
-        if (cached && Date.now() - cached.fetchedAt < LEADS_DEFAULT_CACHE_TTL) {
+        if (
+          cached &&
+          cached.leads.length > 0 &&
+          Date.now() - cached.fetchedAt < LEADS_DEFAULT_CACHE_TTL
+        ) {
           setLeadsData(cached.leads)
           setSearchCount(cached.searchCount)
           setTotalCount(cached.totalCount)
           setHasMore(cached.hasMore)
+          currentPageRef.current = 1
           setCurrentPage(1)
           setIsLoading(false)
           setIsRefetching(false)
@@ -1646,11 +1892,23 @@ export function LeadsTable({
       } else {
         setIsLoading(true)
       }
+      currentPageRef.current = 1
       setCurrentPage(1) // Reset to first page
       setHasMore(true) // Reset hasMore flag
 
-      const token = JSON.parse(localStorage.getItem('map_user') || '{}').access_token;
-      if (!token) throw new Error("Token not found");
+      const token =
+        accessToken ||
+        JSON.parse(localStorage.getItem("map_user") || "{}").access_token
+      if (!token) {
+        // Only sticky-fail after auth has finished loading; otherwise wait for login state.
+        if (!isAuthPermissionsLoading) {
+          authFailureRef.current = true
+          throw new Error("Token not found")
+        }
+        setIsLoading(false)
+        setIsRefetching(false)
+        return
+      }
       if (!URLS.LEAD_LIST) throw new Error("LEAD_LIST URL is not configured");
       
       // Get current filters from localStorage
@@ -1675,13 +1933,31 @@ export function LeadsTable({
         }
       }
 
-      // Combine both filter types
-      const combinedFilters = [...currentFilters, ...currentMetricsFilters];
-      const clientSideFilterActive = hasClientSideFilters(combinedFilters)
+      // Combine user-selected filters with access-scope filters.
+      const scopeOptions = viewScopeFilterContextRef.current
+      const currentViewScope = viewScopeRef.current
+      const scopeFilters = buildViewScopeApiFilters(
+        currentViewScope,
+        scopeOptions,
+        assignableUsersRef.current,
+      )
+      const combinedFilters = mergeLeadListFilters(
+        [...currentFilters, ...currentMetricsFilters],
+        scopeFilters,
+      )
+      const clientSideFilterActive = usesLeadListLocalCount(
+        combinedFilters,
+        currentViewScope,
+        Boolean(searchQuery && searchQuery.trim() !== ""),
+      )
       const postEnrichmentFilterActive = hasPostEnrichmentFollowupFilter(combinedFilters)
 
       const isSearching = searchQuery && searchQuery.trim() !== '';
-      const fetchLength = getLeadListFetchLength(combinedFilters, Boolean(isSearching));
+      const fetchLength = getLeadListFetchLength(
+        combinedFilters,
+        Boolean(isSearching),
+        currentViewScope,
+      );
 
       const response = await fetch(`${URLS.LEAD_LIST}?page=1&length=${fetchLength}&search=${searchQuery}&sort=${sortColumn || ''}&order=${sortDirection}`, {
         method: 'POST',
@@ -1695,8 +1971,14 @@ export function LeadsTable({
       });
       
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          authFailureRef.current = true
+        }
         throw new Error(`Lead list request failed: ${response.status}`);
       }
+
+      authFailureRef.current = false
+      authErrorToastedRef.current = false
 
       const result = await parseJsonResponse<{ code?: number; data?: unknown[]; search_count?: number; total_count?: number }>(response);
       if (abortController.signal.aborted || fetchAbortRef.current !== abortController) return
@@ -1705,25 +1987,33 @@ export function LeadsTable({
         const fetchedLeads = applyClientSideFilters(
           ((result.data || []) as Lead[]).map(normalizeLead),
           combinedFilters,
+          currentViewScope,
+          scopeOptions,
         )
         const deduplicatedLeads = deduplicateLeads(fetchedLeads)
         const enrichedLeads = await enrichLeadsForListView(
           deduplicatedLeads,
           token,
           combinedFilters,
-          visibleColumns,
+          visibleColumnsRef.current,
           abortController.signal,
         )
         if (abortController.signal.aborted || fetchAbortRef.current !== abortController) return
 
         const usesLocalCount = clientSideFilterActive || postEnrichmentFilterActive
-        const filteredTotal = usesLocalCount
-          ? enrichedLeads.length
-          : (result.search_count ?? result.total_count ?? enrichedLeads.length)
-
-        const nextSearchCount = usesLocalCount ? enrichedLeads.length : (result.search_count ?? filteredTotal)
-        const nextTotalCount = result.total_count ?? filteredTotal
-        const nextHasMore = shouldDisablePagination(combinedFilters, Boolean(isSearching))
+        const { searchCount: nextSearchCount, totalCount: nextTotalCount, filteredTotal } =
+          resolveLeadListCounts({
+            viewScope: currentViewScope,
+            usesLocalCount,
+            enrichedLeadsLength: enrichedLeads.length,
+            searchCount: result.search_count,
+            totalCount: result.total_count,
+          })
+        const nextHasMore = shouldDisablePagination(
+          combinedFilters,
+          Boolean(isSearching),
+          currentViewScope,
+        )
           ? false
           : enrichedLeads.length < filteredTotal
 
@@ -1738,11 +2028,12 @@ export function LeadsTable({
         // Persist the default first page so navigating back renders instantly.
         const isDefaultDataView =
           !isSearching &&
-          combinedFilters.length === 0 &&
+          currentFilters.length === 0 &&
+          currentMetricsFilters.length === 0 &&
           sortColumn === "create_date" &&
           sortDirection === "desc"
         if (isDefaultDataView) {
-          queryClient.setQueryData<CachedDefaultLeads>(LEADS_DEFAULT_CACHE_KEY, {
+          queryClient.setQueryData<CachedDefaultLeads>(leadsDefaultCacheKey, {
             leads: enrichedLeads,
             totalCount: nextTotalCount,
             searchCount: nextSearchCount,
@@ -1761,27 +2052,49 @@ export function LeadsTable({
         setLeadsData([]);
       }
       setHasMore(false);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to load leads",
-        variant: "destructive",
-      });
+      const shouldToast =
+        !authFailureRef.current || !authErrorToastedRef.current
+      if (shouldToast) {
+        if (authFailureRef.current) {
+          authErrorToastedRef.current = true
+        }
+        toast({
+          title: "Error",
+          description: error instanceof Error ? error.message : "Failed to load leads",
+          variant: "destructive",
+        });
+      }
     } finally {
       if (fetchAbortRef.current === abortController) {
         setIsLoading(false)
         setIsRefetching(false)
       }
     }
-  }, [searchQuery, filterSignature, sortColumn, sortDirection, activeMetricFilter, toast, queryClient, visibleColumns]);
+  }, [searchQuery, filterSignature, sortColumn, sortDirection, activeMetricFilter, toast, queryClient, leadsDefaultCacheKey, accessToken, isAuthPermissionsLoading]);
 
   // Load initial data and handle filter changes. A change in `refreshKey`
   // (e.g. after adding a lead) forces a fresh fetch that bypasses the cache.
   const lastRefreshKeyRef = useRef(refreshKey)
+  const lastAccessTokenRef = useRef(accessToken)
+  const lastViewScopeRef = useRef(viewScope)
   useEffect(() => {
+    if (isAuthPermissionsLoading) return
+
     const forced = refreshKey !== lastRefreshKeyRef.current
+    const tokenBecameAvailable =
+      Boolean(accessToken) && accessToken !== lastAccessTokenRef.current
+    const viewScopeChanged = viewScope !== lastViewScopeRef.current
     lastRefreshKeyRef.current = refreshKey
-    void fetchLeads({ force: forced });
-  }, [fetchLeads, refreshKey]);
+    lastAccessTokenRef.current = accessToken
+    lastViewScopeRef.current = viewScope
+
+    if (forced || tokenBecameAvailable) {
+      authFailureRef.current = false
+      authErrorToastedRef.current = false
+    }
+    // Skip no-op re-runs when only unstable callback identity changed.
+    void fetchLeads({ force: forced || tokenBecameAvailable || viewScopeChanged });
+  }, [fetchLeads, refreshKey, isAuthPermissionsLoading, accessToken, viewScope]);
 
   // Prepend a newly created lead without refetching the full list.
   useEffect(() => {
@@ -1800,9 +2113,9 @@ export function LeadsTable({
     setTotalCount((count) => count + 1)
     setSearchCount((count) => count + 1)
 
-    const cached = queryClient.getQueryData<CachedDefaultLeads>(LEADS_DEFAULT_CACHE_KEY)
+    const cached = queryClient.getQueryData<CachedDefaultLeads>(leadsDefaultCacheKey)
     if (cached) {
-      queryClient.setQueryData<CachedDefaultLeads>(LEADS_DEFAULT_CACHE_KEY, {
+      queryClient.setQueryData<CachedDefaultLeads>(leadsDefaultCacheKey, {
         ...cached,
         leads: [normalized, ...cached.leads.filter((lead) => lead._id !== normalized._id)],
         totalCount: cached.totalCount + 1,
@@ -1812,7 +2125,7 @@ export function LeadsTable({
     }
 
     onPrependLeadHandled?.()
-  }, [prependLeadRequest, onPrependLeadHandled, queryClient])
+  }, [prependLeadRequest, onPrependLeadHandled, queryClient, leadsDefaultCacheKey])
 
   useEffect(() => {
     const fetchDropdownOptions = async () => {
@@ -1820,95 +2133,81 @@ export function LeadsTable({
         const token = JSON.parse(localStorage.getItem("map_user") || "{}").access_token
         if (!token) return
 
-        const [settingsResponse, usersResponse] = await Promise.all([
-          fetch(URLS.LEAD_SETTINGS_LIST, {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
+        const orgId = getOrgIdFromAuth(userData)
+        const [settingsData, usersResponse] = await Promise.all([
+          queryClient.fetchQuery({
+            queryKey: LEAD_SETTINGS_QUERY_KEY,
+            queryFn: () => fetchLeadSettingsList(token),
           }),
-          fetchAssignableUserOptions(token),
+          queryClient.fetchQuery({
+            queryKey: assignableUsersQueryKey(orgId),
+            queryFn: () => fetchLeadAssignableUsers(token, orgId),
+          }),
         ])
 
-        const settingsResult = await parseJsonResponse<{
-          code?: number
-          data?: {
-            lead_status?: LeadSettingItem[]
-            customer_type?: LeadSettingItem[]
-            customer_requirement?: LeadSettingItem[]
-          }
-        }>(settingsResponse)
+        const leadStatuses = [...(settingsData?.lead_status || [])].sort(
+          (a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0),
+        ) as LeadSettingItem[]
+        const customerTypes = (settingsData?.customer_type || []) as LeadSettingItem[]
+        const customerRequirements = (settingsData?.customer_requirement ||
+          []) as LeadSettingItem[]
 
-        if (settingsResult.code === 200) {
-          const leadStatuses = [...(settingsResult.data?.lead_status || [])].sort(
-            (a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0),
-          )
-          const customerTypes = settingsResult.data?.customer_type || []
-          const customerRequirements = settingsResult.data?.customer_requirement || []
-
-          setLeadStatusSettings(leadStatuses)
-          setLeadStatusOptions(mapLeadSettingsToDropdownOptions(leadStatuses))
-          setCustomerTypeOptions(mapLeadSettingsToDropdownOptions(customerTypes))
-          setCustomerRequirementOptions(mapLeadSettingsToDropdownOptions(customerRequirements))
-        }
+        setLeadStatusSettings(leadStatuses)
+        setLeadStatusOptions(mapLeadSettingsToDropdownOptions(leadStatuses))
+        setCustomerTypeOptions(mapLeadSettingsToDropdownOptions(customerTypes))
+        setCustomerRequirementOptions(mapLeadSettingsToDropdownOptions(customerRequirements))
 
         if (usersResponse.length > 0) {
-          setAssignedToOptions(usersResponse)
+          setAssignableUsers(usersResponse)
+        } else if (leadsData.length > 0) {
+          setAssignableUsers((current) => mergeAssignableUsersFromLeads(current, leadsData))
         }
       } catch (error) {
         console.error("Error fetching lead dropdown options:", error)
       }
     }
 
-    fetchDropdownOptions()
-  }, [])
+    void fetchDropdownOptions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- warm once when auth is ready
+  }, [userData?.access_token, queryClient])
 
   useEffect(() => {
     leadsDataRef.current = leadsData
-    setAssignedToOptions((current) => mergeAssignedToOptions(current, leadsData))
+    setAssignableUsers((current) => mergeAssignableUsersFromLeads(current, leadsData))
   }, [leadsData])
 
   // Intersection Observer for infinite scrolling
   useEffect(() => {
+    const scrollRoot = tableScrollRef.current
     // Don't set up observer if there's no more data, still loading, or no target element
-    if (!observerTarget.current || !hasMore || isLoading || isLoadingMore || isLoadingMoreRef.current) {
+    if (!observerTarget.current || !scrollRoot || !hasMore || isLoading) {
       return
     }
 
-    let observer: IntersectionObserver | null = null
-
     const handleIntersection = (entries: IntersectionObserverEntry[]) => {
-      // Only trigger if:
-      // 1. Element is intersecting
-      // 2. We have more data to load
-      // 3. We're not currently loading (check both state and ref)
-      // 4. We're not in initial loading state
       if (
         entries[0].isIntersecting &&
-        hasMore &&
-        !isLoading &&
-        !isLoadingMore &&
+        hasMoreRef.current &&
         !isLoadingMoreRef.current
       ) {
-        loadMoreData()
+        void loadMoreDataRef.current()
       }
     }
 
-    observer = new IntersectionObserver(handleIntersection, {
+    const observer = new IntersectionObserver(handleIntersection, {
+      root: scrollRoot,
       threshold: 0.1,
-      rootMargin: '100px', // Start loading slightly before reaching the bottom
+      rootMargin: "0px",
     })
 
-    observer.observe(observerTarget.current)
+    const target = observerTarget.current
+    observer.observe(target)
 
     return () => {
-      if (observer && observerTarget.current) {
-        observer.unobserve(observerTarget.current)
-        observer.disconnect()
-      }
+      observer.unobserve(target)
+      observer.disconnect()
     }
-  }, [hasMore, isLoading, isLoadingMore, loadMoreData])
+  }, [hasMore, isLoading, leadsData.length, isMobile])
 
   useEffect(() => {
     if (selectedLead && selectedLead.new_task_type && selectedLead.new_task_type.length > 0) {
@@ -1933,8 +2232,20 @@ export function LeadsTable({
     fetchLeads()
   }, [fetchLeads])
 
+  const denyLeadEdit = useCallback(() => {
+    toast({
+      title: "Permission denied",
+      description: "You don't have permission to edit leads.",
+      variant: "destructive",
+    })
+  }, [toast])
+
   // Function to update lead status
   const handleStatusUpdate = async (leadId: string, newStatusValue: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
     const storedData = localStorage.getItem('map_user')
     if (!storedData) return
     
@@ -2007,6 +2318,10 @@ export function LeadsTable({
   }
 
   const handleCustomerTypeUpdate = async (leadId: string, newCustomerTypeValue: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
     const storedData = localStorage.getItem("map_user")
     if (!storedData) return
 
@@ -2081,19 +2396,27 @@ export function LeadsTable({
   }
 
   const handleAssignedToUpdate = async (leadId: string, newAssignedToValue: string) => {
-    const storedData = localStorage.getItem("map_user")
-    if (!storedData) return
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
+    if (!userData?.access_token) return
 
-    const userData = JSON.parse(storedData)
     const token = userData.access_token
-    const newAssignee = assignedToOptions.find((option) => option.value === newAssignedToValue)
+    const lead = leadsData.find((item) => item._id === leadId)
+    if (!lead) return
+
+    const branchScopedUsers = filterAssignableUsersForLead(
+      assignableUsers,
+      lead as Lead & Record<string, unknown>,
+      userBranchMap,
+      userData,
+    )
+    const newAssignee = branchScopedUsers.find((user) => user.id === newAssignedToValue)
 
     if (!newAssignee) return
 
     try {
-      const lead = leadsData.find((item) => item._id === leadId)
-      if (!lead) return
-
       const response = await fetch(`${URLS.LEAD_UPDATE}/${leadId}`, {
         method: "PUT",
         headers: {
@@ -2116,8 +2439,8 @@ export function LeadsTable({
             item._id === leadId
               ? {
                   ...item,
-                  assigned_to: newAssignee.value,
-                  assigned_to_name: newAssignee.label,
+                  assigned_to: newAssignee.id,
+                  assigned_to_name: newAssignee.name,
                 }
               : item
           )
@@ -2134,7 +2457,7 @@ export function LeadsTable({
           associate_id: leadId,
           from_data: lead.assigned_to,
           to_data: newAssignedToValue,
-          text_info: `Updated assigned to from "${fromText}" to "${newAssignee.label}"`,
+          text_info: `Updated assigned to from "${fromText}" to "${newAssignee.name}"`,
         })
 
         toast({
@@ -2156,6 +2479,10 @@ export function LeadsTable({
   }
 
   const handleStageUpdate = async (leadId: string, newStageValue: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
     const storedData = localStorage.getItem('map_user')
     if (!storedData) return
 
@@ -2259,6 +2586,14 @@ export function LeadsTable({
   // Function to handle lead deletion
   const handleDeleteLead = async () => {
     if (!leadToDelete || isDeletingLead) return;
+    if (!canDeleteLead) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to delete leads.",
+        variant: "destructive",
+      })
+      return
+    }
 
     setIsDeletingLead(true);
 
@@ -2575,16 +2910,18 @@ export function LeadsTable({
                 <Mail className="h-4 w-4 mr-2" />
                 Send Email
               </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleDeleteClick(lead)
-                }}
-                className="text-red-600 focus:text-red-600"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
+              {canDeleteLead && (
+                <DropdownMenuItem 
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDeleteClick(lead)
+                  }}
+                  className="text-red-600 focus:text-red-600"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -2605,6 +2942,7 @@ export function LeadsTable({
                       lead={lead}
                       statusOptions={leadStatusOptions}
                       onStatusChange={handleStatusUpdate}
+                      readOnly={!canEditLead}
                     />
                   </div>
                 )
@@ -2618,6 +2956,7 @@ export function LeadsTable({
                       lead={lead}
                       customerTypeOptions={customerTypeOptions}
                       onCustomerTypeChange={handleCustomerTypeUpdate}
+                      readOnly={!canEditLead}
                     />
                   </div>
                 )
@@ -2629,8 +2968,11 @@ export function LeadsTable({
                     <span className="text-xs text-muted-foreground w-20 flex-shrink-0">{columnLabel}:</span>
                     <LeadAssignedToDropdown
                       lead={lead}
-                      assignedToOptions={assignedToOptions}
+                      assignableUsers={assignableUsers}
+                      userBranchMap={userBranchMap}
+                      authUser={userData}
                       onAssignedToChange={handleAssignedToUpdate}
+                      readOnly={!canEditLead}
                     />
                   </div>
                 )
@@ -2645,6 +2987,7 @@ export function LeadsTable({
                       lead={lead}
                       leadStatusSettings={leadStatusSettings}
                       onStageChange={handleStageUpdate}
+                      readOnly={!canEditLead}
                     />
                   </div>
                 )
@@ -2882,7 +3225,12 @@ export function LeadsTable({
       )}
       {/* Mobile Card View */}
       {isMobile ? (
-        <div className="space-y-3">
+        <div
+          ref={tableScrollRef}
+          className="overflow-auto"
+          style={{ maxHeight: tableScrollMaxHeight }}
+        >
+          <div className="space-y-3">
           {isLoading && leadsData.length === 0 ? (
             <div className="py-10 text-center">
               <LoadingSpinner />
@@ -2902,9 +3250,14 @@ export function LeadsTable({
               {hasMore && <div ref={observerTarget} className="h-4" />}
             </>
           )}
+          </div>
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div
+          ref={tableScrollRef}
+          className="overflow-auto"
+          style={{ maxHeight: tableScrollMaxHeight }}
+        >
         <table
           className="w-full caption-bottom border-collapse text-sm table-auto"
           style={{ minWidth: `${tableMinWidth}px` }}
@@ -2990,6 +3343,7 @@ export function LeadsTable({
                               lead={lead}
                               statusOptions={leadStatusOptions}
                               onStatusChange={handleStatusUpdate}
+                              readOnly={!canEditLead}
                             />
                           </LeadsTableCell>
                         );
@@ -3002,6 +3356,7 @@ export function LeadsTable({
                               lead={lead}
                               leadStatusSettings={leadStatusSettings}
                               onStageChange={handleStageUpdate}
+                              readOnly={!canEditLead}
                             />
                           </LeadsTableCell>
                         );
@@ -3014,6 +3369,7 @@ export function LeadsTable({
                               lead={lead}
                               customerTypeOptions={customerTypeOptions}
                               onCustomerTypeChange={handleCustomerTypeUpdate}
+                              readOnly={!canEditLead}
                             />
                           </LeadsTableCell>
                         );
@@ -3024,8 +3380,11 @@ export function LeadsTable({
                           <LeadsTableCell key={column} column={column} isCompactView={isCompactView}>
                             <LeadAssignedToDropdown
                               lead={lead}
-                              assignedToOptions={assignedToOptions}
+                              assignableUsers={assignableUsers}
+                              userBranchMap={userBranchMap}
+                              authUser={userData}
                               onAssignedToChange={handleAssignedToUpdate}
+                              readOnly={!canEditLead}
                             />
                           </LeadsTableCell>
                         );
@@ -3388,16 +3747,18 @@ export function LeadsTable({
                             <Mail className="h-4 w-4 mr-2" />
                             Send Email
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleDeleteClick(lead)
-                            }}
-                            className="text-red-600 focus:text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
+                          {canDeleteLead && (
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteClick(lead)
+                              }}
+                              className="text-red-600 focus:text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                   </LeadsTableCell>

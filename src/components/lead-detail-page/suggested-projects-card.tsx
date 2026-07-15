@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Building, Check, ChevronDown, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,7 @@ import {
   leadDetailSectionTitleClassName,
 } from "@/lib/form-field-styles"
 import { updateLeadSuggestedProjects } from "@/lib/leads/lead-api"
+import { PROJECT_LIST_QUERY_KEY } from "@/lib/leads/lead-shared-queries"
 import { fetchProjectList } from "@/lib/projects/project-api"
 import type { Project } from "@/lib/projects/types"
 import { cn } from "@/lib/utils"
@@ -37,6 +39,7 @@ interface SuggestedProjectsCardProps {
   leadId: string
   selectedProjectIds: string[]
   onSelectedProjectIdsChange: (projectIds: string[]) => void
+  canEdit?: boolean
 }
 
 function ProjectNameRow({ name }: { name: string }) {
@@ -54,11 +57,9 @@ export function SuggestedProjectsCard({
   leadId,
   selectedProjectIds,
   onSelectedProjectIdsChange,
+  canEdit = true,
 }: SuggestedProjectsCardProps) {
   const { toast } = useToast()
-  const [projects, setProjects] = useState<Project[]>([])
-  const [isLoadingProjects, setIsLoadingProjects] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
   const [isPickerOpen, setIsPickerOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const latestSelectionRef = useRef(selectedProjectIds)
@@ -67,36 +68,19 @@ export function SuggestedProjectsCard({
     latestSelectionRef.current = selectedProjectIds
   }, [selectedProjectIds])
 
-  useEffect(() => {
-    let cancelled = false
+  const {
+    data: projectListData,
+    isLoading: isLoadingProjects,
+    isError,
+  } = useQuery({
+    queryKey: PROJECT_LIST_QUERY_KEY,
+    queryFn: () => fetchProjectList({ length: 500 }),
+    enabled: Boolean(leadId),
+    staleTime: 5 * 60 * 1000,
+  })
 
-    const loadProjects = async () => {
-      setIsLoadingProjects(true)
-      setLoadError(null)
-
-      try {
-        const { projects: projectList } = await fetchProjectList({ length: 500 })
-        if (!cancelled) {
-          setProjects(projectList)
-        }
-      } catch {
-        if (!cancelled) {
-          setProjects([])
-          setLoadError("Failed to load projects.")
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingProjects(false)
-        }
-      }
-    }
-
-    void loadProjects()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const projects = projectListData?.projects ?? []
+  const loadError = isError ? "Failed to load projects." : null
 
   const selectedProjects = useMemo(
     () =>
@@ -130,6 +114,7 @@ export function SuggestedProjectsCard({
   }
 
   const toggleProject = (projectId: string) => {
+    if (!canEdit || isSaving) return
     const nextProjectIds = selectedProjectIds.includes(projectId)
       ? selectedProjectIds.filter((id) => id !== projectId)
       : [...selectedProjectIds, projectId]
@@ -186,7 +171,7 @@ export function SuggestedProjectsCard({
                   variant="outline"
                   role="combobox"
                   aria-expanded={isPickerOpen}
-                  disabled={!leadId || isSaving}
+                  disabled={!leadId || isSaving || !canEdit}
                   className={cn(
                     formSelectTriggerClassName,
                     "h-10 font-normal text-muted-foreground hover:bg-background",

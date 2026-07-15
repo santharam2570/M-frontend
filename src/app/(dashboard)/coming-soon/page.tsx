@@ -7,10 +7,10 @@ import { ComingSoon } from "@/components/coming-soon"
 import { DashboardPageLayout } from "@/components/layout/dashboard-page-layout"
 
 const moduleNames: Record<string, string> = {
-  dashboard: "Dashboard",
   documents: "Documents",
   reports: "Reports",
   agents: "Agents",
+  payments: "Payments",
   "settings-trash": "Trash",
   "settings-reporting-hierarchy": "Reporting Hierarchy",
 }

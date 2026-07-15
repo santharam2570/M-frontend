@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import Link from "next/link"
 import {
   Building,
@@ -28,22 +28,26 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
+import { useProjectPermissions } from "@/hooks/useProjectPermissions"
+import { useUserData } from "@/hooks/useUserData"
 import { getApiErrorMessage } from "@/lib/api"
 import {
   coerceProjectUnits,
-  fetchProjectDetail,
-  fetchProjectDocuments,
-  fetchProjectMatchedLeads,
-  fetchProjectSiteVisits,
-  fetchProjectUnits,
-  fetchUnitStatusOptionsApi,
+  fetchProjectSettingsListApi,
+  mapProjectSettingsToOptions,
+  resolveProjectStatusOption,
   updateProjectApi,
-  type ProjectSettingOption,
 } from "@/lib/projects/project-api"
-import type { MatchedLead, Project } from "@/lib/projects/types"
+import {
+  fetchMatchedLeadsSafe,
+  fetchProjectDetailBundle,
+  PROJECT_SETTINGS_QUERY_KEY,
+  projectDetailQueryKey,
+  projectMatchedLeadsQueryKey,
+} from "@/lib/projects/project-shared-queries"
+import type { Project } from "@/lib/projects/types"
 import { formatIndianCurrency } from "@/lib/projects/types"
 import {
-  PROJECT_STATUS_LABELS,
   PROPERTY_TYPE_LABELS,
   RERA_STATUS_LABELS,
 } from "@/lib/projects/types"
@@ -51,118 +55,96 @@ import {
   leadDetailBodyClassName,
   leadDetailBodyMutedClassName,
   leadDetailCaptionClassName,
+  leadDetailCardClassName,
+  leadDetailContentAreaClassName,
+  leadDetailFieldValueClassName,
+  leadDetailHeaderClassName,
+  leadDetailIconBoxClassName,
   leadDetailMetaLabelClassName,
-  leadDetailMetaTextClassName,
+  leadDetailPageBackgroundClassName,
+  leadDetailStatCardClassName,
   leadDetailPageTitleClassName,
   leadDetailSectionTitleClassName,
   leadDetailSubsectionLabelClassName,
+  leadDetailTabBarClassName,
 } from "@/lib/form-field-styles"
 import { cn } from "@/lib/utils"
-import { countUnitsWithOwnerSiteStatus } from "./units/unit-utils"
-import type { UnitStatusFilter } from "./units/unit-utils"
-
-const leadDetailCardClassName =
-  "rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)]"
-
-const PROJECT_STATUS_OPTIONS = Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => ({
-  value,
-  label,
-}))
+import { countUnitsWithOwnerSiteStatus, type UnitStatusFilter } from "./units/unit-utils"
 
 const RERA_STATUS_OPTIONS = Object.entries(RERA_STATUS_LABELS).map(([value, label]) => ({
   value,
   label,
 }))
 
-type ProjectDetailSnapshot = {
-  project: Project
-  matchedLeads: MatchedLead[]
-  documentsCount: number
-}
-
 export default function ProjectDetailPage() {
   const params = useParams()
   const router = useRouter()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { userData, isAuthLoading } = useUserData()
+  const {
+    canViewProjects,
+    canEditProject,
+    isLoading: isPermissionsLoading,
+  } = useProjectPermissions()
+  const canViewProjectDocuments = canViewProjects
+  const canAddProjectDocument = canEditProject
+  const canDownloadProjectDocument = canViewProjects
   const projectId = Array.isArray(params?.id) ? params.id[0] : String(params?.id ?? "")
-  const cachedDetail = projectId
-    ? queryClient.getQueryData<ProjectDetailSnapshot>([
-        "project-detail-snapshot",
-        projectId,
-      ])
-    : undefined
+  const token = userData?.access_token ?? null
 
-  const [project, setProject] = useState<Project | null>(cachedDetail?.project ?? null)
-  const [matchedLeads, setMatchedLeads] = useState<MatchedLead[]>(cachedDetail?.matchedLeads ?? [])
-  const [isLoading, setIsLoading] = useState(!cachedDetail)
-  const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("units")
   const [unitStatusFilter, setUnitStatusFilter] = useState<UnitStatusFilter | null>(null)
-  const [statusOptions, setStatusOptions] = useState<ProjectSettingOption[]>([])
-  const [documentsCount, setDocumentsCount] = useState(cachedDetail?.documentsCount ?? 0)
-
-  const loadProject = useCallback(async (options?: { silent?: boolean }) => {
-    if (!projectId) {
-      setProject(null)
-      setMatchedLeads([])
-      setDocumentsCount(0)
-      setIsLoading(false)
-      return
-    }
-
-    if (!options?.silent) {
-      setIsLoading(true)
-    }
-
-    try {
-      const [detail, units, siteVisits, matchedLeadsResult, documents] = await Promise.all([
-        fetchProjectDetail(projectId),
-        fetchProjectUnits(projectId),
-        fetchProjectSiteVisits(projectId).catch(() => []),
-        fetchProjectMatchedLeads(projectId).catch(() => []),
-        fetchProjectDocuments(projectId).catch(() => []),
-      ])
-
-      const normalizedUnits = coerceProjectUnits(units)
-      const detailUnits = coerceProjectUnits(detail.units)
-      const projectDocuments =
-        documents.length > 0 ? documents : detail.documents ?? []
-
-      setProject({
-        ...detail,
-        units: normalizedUnits.length > 0 ? normalizedUnits : detailUnits,
-        site_visits: siteVisits.length > 0 ? siteVisits : detail.site_visits,
-        documents: projectDocuments,
-      })
-      setMatchedLeads(matchedLeadsResult)
-      setDocumentsCount(projectDocuments.length)
-      setError(null)
-    } catch (error) {
-      if (!options?.silent) {
-        setProject(null)
-        setDocumentsCount(0)
-        const message = getApiErrorMessage(error, "Failed to load project details.")
-        setError(message)
-        toast({
-          title: "Error",
-          description: message,
-          variant: "destructive",
-        })
-      }
-    } finally {
-      if (!options?.silent) {
-        setIsLoading(false)
-      }
-    }
-  }, [projectId, toast])
 
   useEffect(() => {
-    fetchUnitStatusOptionsApi()
-      .then(setStatusOptions)
-      .catch(() => setStatusOptions([]))
-  }, [])
+    if (isAuthLoading) return
+    if (!userData) router.push("/login")
+  }, [isAuthLoading, userData, router])
 
+  const { data: settings } = useQuery({
+    queryKey: PROJECT_SETTINGS_QUERY_KEY,
+    enabled: !!token,
+    queryFn: () => fetchProjectSettingsListApi(),
+  })
+
+  const statusOptions = useMemo(
+    () => mapProjectSettingsToOptions(settings?.unit_status),
+    [settings],
+  )
+  const projectStatusOptions = useMemo(
+    () => mapProjectSettingsToOptions(settings?.project_status),
+    [settings],
+  )
+
+  const {
+    data: project,
+    isLoading,
+    error,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: projectDetailQueryKey(projectId),
+    enabled: !!token && !!projectId,
+    queryFn: () => fetchProjectDetailBundle(projectId),
+  })
+
+  const { data: matchedLeads = [] } = useQuery({
+    queryKey: projectMatchedLeadsQueryKey(projectId),
+    enabled: !!token && !!projectId,
+    queryFn: () => fetchMatchedLeadsSafe(projectId),
+  })
+
+  const documentsCount = project?.documents?.length ?? 0
+
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to load project details."),
+        variant: "destructive",
+      })
+    }
+  }, [error, toast])
   const ownerSiteUnits = useMemo(() => {
     if (!project) return 0
 
@@ -174,57 +156,26 @@ export default function ProjectDetailPage() {
     return project.owner_site_units ?? 0
   }, [project, statusOptions])
 
-  useEffect(() => {
-    if (!projectId) {
-      setProject(null)
-      setMatchedLeads([])
-      setDocumentsCount(0)
-      setIsLoading(false)
-      return
+  const projectStatusOption = useMemo(
+    () =>
+      project
+        ? resolveProjectStatusOption(project.status, projectStatusOptions)
+        : undefined,
+    [project, projectStatusOptions],
+  )
+
+  const refreshProject = (options?: { silent?: boolean }) => {
+    void queryClient.invalidateQueries({ queryKey: projectDetailQueryKey(projectId) })
+    if (!options?.silent) {
+      void queryClient.invalidateQueries({ queryKey: projectMatchedLeadsQueryKey(projectId) })
     }
+  }
 
-    try {
-      const stored = localStorage.getItem("map_user")
-      const userData = stored ? JSON.parse(stored) : null
-      if (!userData?.access_token) {
-        router.push("/login")
-        return
-      }
-    } catch {
-      router.push("/login")
-      return
-    }
-
-    const snapshot = queryClient.getQueryData<ProjectDetailSnapshot>([
-      "project-detail-snapshot",
-      projectId,
-    ])
-
-    if (snapshot) {
-      setProject(snapshot.project)
-      setMatchedLeads(snapshot.matchedLeads)
-      setDocumentsCount(snapshot.documentsCount)
-      setIsLoading(false)
-      setError(null)
-      void loadProject({ silent: true })
-      return
-    }
-
-    setProject(null)
-    setMatchedLeads([])
-    setDocumentsCount(0)
-    setError(null)
-    void loadProject()
-  }, [projectId, loadProject, queryClient, router])
-
-  useEffect(() => {
-    if (isLoading || !projectId || !project?._id) return
-    queryClient.setQueryData<ProjectDetailSnapshot>(["project-detail-snapshot", projectId], {
-      project,
-      matchedLeads,
-      documentsCount,
-    })
-  }, [isLoading, projectId, project, matchedLeads, documentsCount, queryClient])
+  const patchProjectCache = (updater: (prev: Project) => Project) => {
+    queryClient.setQueryData<Project>(projectDetailQueryKey(projectId), (prev) =>
+      prev ? updater(prev) : prev,
+    )
+  }
 
   const handleFieldUpdate = async (field: string, value: string) => {
     if (!project) return
@@ -249,32 +200,28 @@ export default function ProjectDetailPage() {
 
     try {
       const updated = await updateProjectApi(project._id, { [field]: parsedValue })
-      setProject((prev) =>
-        prev
-          ? {
-              ...prev,
-              ...updated,
-              units: prev.units,
-              site_visits: prev.site_visits,
-              documents: prev.documents,
-            }
-          : updated,
-      )
+      patchProjectCache((prev) => ({
+        ...prev,
+        ...updated,
+        units: prev.units,
+        site_visits: prev.site_visits,
+        documents: prev.documents,
+      }))
       toast({
         title: "Updated",
         description: `${field.replace(/_/g, " ")} saved successfully.`,
       })
-    } catch (error) {
+    } catch (updateError) {
       toast({
         title: "Error",
-        description: getApiErrorMessage(error, "Failed to update project."),
+        description: getApiErrorMessage(updateError, "Failed to update project."),
         variant: "destructive",
       })
     }
   }
 
   const handleTitleSave = (value: string) => {
-    handleFieldUpdate("name", value.toUpperCase())
+    void handleFieldUpdate("name", value.toUpperCase())
   }
 
   const handleUnitStatusFilter = (filter: UnitStatusFilter) => {
@@ -282,9 +229,9 @@ export default function ProjectDetailPage() {
     setActiveTab("units")
   }
 
-  if (isLoading) {
+  if (isLoading && !project) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50">
+      <div className={cn("flex min-h-0 flex-1 flex-col items-center justify-center gap-3", leadDetailPageBackgroundClassName)}>
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className={leadDetailBodyMutedClassName}>Loading project details...</p>
       </div>
@@ -293,15 +240,16 @@ export default function ProjectDetailPage() {
 
   if (error && !project) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 px-4">
-        <p className="text-center text-sm text-destructive">{error}</p>
+      <div className={cn("flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-4", leadDetailPageBackgroundClassName)}>
+        <p className="text-center text-sm text-destructive">
+          {getApiErrorMessage(error, "Failed to load project details.")}
+        </p>
         <Button
           variant="outline"
           onClick={() => {
-            setIsLoading(true)
-            setError(null)
-            void loadProject()
+            void refetch()
           }}
+          disabled={isFetching}
         >
           Retry
         </Button>
@@ -320,20 +268,67 @@ export default function ProjectDetailPage() {
     )
   }
 
+  if (!canViewProjects && !isPermissionsLoading) {
+    return (
+      <div className={cn("flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8", leadDetailContentAreaClassName)}>
+        <p className="text-sm text-muted-foreground">You don&apos;t have permission to view projects.</p>
+        <Button variant="outline" onClick={() => router.push("/projects")}>
+          Back to Projects
+        </Button>
+      </div>
+    )
+  }
+
   const propertyTypeLabels = project.property_types
     .map((type) => PROPERTY_TYPE_LABELS[type])
     .join(", ")
 
+  const unitMetricFilters = [
+    {
+      id: "available" as const,
+      label: "Available",
+      value: project.available_units,
+      activeClassName:
+        "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200 dark:border-emerald-700 dark:bg-emerald-950/50 dark:ring-emerald-800",
+      valueClassName: "text-emerald-600 dark:text-emerald-400",
+    },
+    {
+      id: "on_hold" as const,
+      label: "On Hold",
+      value: project.blocked_units,
+      activeClassName:
+        "border-amber-300 bg-amber-50 ring-1 ring-amber-200 dark:border-amber-700 dark:bg-amber-950/50 dark:ring-amber-800",
+      valueClassName: "text-amber-600 dark:text-amber-400",
+    },
+    {
+      id: "booked" as const,
+      label: "Booked",
+      value: project.sold_units,
+      activeClassName:
+        "border-blue-300 bg-blue-50 ring-1 ring-blue-200 dark:border-blue-700 dark:bg-blue-950/50 dark:ring-blue-800",
+      valueClassName: "text-blue-600 dark:text-blue-400",
+    },
+    {
+      id: "owner_site" as const,
+      label: "Owner Site",
+      value: ownerSiteUnits,
+      activeClassName:
+        "border-violet-300 bg-violet-50 ring-1 ring-violet-200 dark:border-violet-700 dark:bg-violet-950/50 dark:ring-violet-800",
+      valueClassName: "text-violet-600 dark:text-violet-400",
+    },
+  ]
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-50/40">
-      <div className="shrink-0 border-b border-slate-200/80 bg-white px-4 py-4 lg:px-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-3">
+    <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", leadDetailContentAreaClassName)}>
+      <div className={cn(leadDetailHeaderClassName, "shrink-0 px-3 py-4 sm:px-4 lg:px-6 lg:py-5")}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+          <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <EditableTitle
                 value={project.name}
                 onSave={handleTitleSave}
                 className={leadDetailPageTitleClassName}
+                canEdit={canEditProject}
               />
               <Badge variant="outline" className="font-mono text-xs">
                 {project.project_no}
@@ -341,10 +336,24 @@ export default function ProjectDetailPage() {
               <Badge
                 variant="outline"
                 className={cn(
-                  project.status === "active" && "border-emerald-200 bg-emerald-50 text-emerald-700",
+                  !projectStatusOption?.color &&
+                    (projectStatusOption?.label ?? project.status).toLowerCase() === "active" &&
+                    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
+                  !projectStatusOption?.color &&
+                    (projectStatusOption?.label ?? project.status).toLowerCase() === "inactive" &&
+                    "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-400",
                 )}
+                style={
+                  projectStatusOption?.color
+                    ? {
+                        borderColor: `${projectStatusOption.color}40`,
+                        backgroundColor: `${projectStatusOption.color}14`,
+                        color: projectStatusOption.color,
+                      }
+                    : undefined
+                }
               >
-                {PROJECT_STATUS_LABELS[project.status]}
+                {projectStatusOption?.label ?? project.status}
               </Badge>
             </div>
 
@@ -359,67 +368,37 @@ export default function ProjectDetailPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[420px]">
-            <button
-              type="button"
-              onClick={() => handleUnitStatusFilter("available")}
-              className={cn(
-                "rounded-lg border px-3 py-2 text-left transition-colors",
-                unitStatusFilter === "available"
-                  ? "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200"
-                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
-              )}
-            >
-              <p className={leadDetailMetaLabelClassName}>Available</p>
-              <p className={cn(leadDetailMetaTextClassName, "text-emerald-600")}>
-                {project.available_units}
-              </p>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleUnitStatusFilter("on_hold")}
-              className={cn(
-                "rounded-lg border px-3 py-2 text-left transition-colors",
-                unitStatusFilter === "on_hold"
-                  ? "border-amber-300 bg-amber-50 ring-1 ring-amber-200"
-                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
-              )}
-            >
-              <p className={leadDetailMetaLabelClassName}>On Hold</p>
-              <p className={leadDetailMetaTextClassName}>{project.blocked_units}</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleUnitStatusFilter("booked")}
-              className={cn(
-                "rounded-lg border px-3 py-2 text-left transition-colors",
-                unitStatusFilter === "booked"
-                  ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
-                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
-              )}
-            >
-              <p className={leadDetailMetaLabelClassName}>Booked</p>
-              <p className={leadDetailMetaTextClassName}>{project.sold_units}</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleUnitStatusFilter("owner_site")}
-              className={cn(
-                "rounded-lg border px-3 py-2 text-left transition-colors",
-                unitStatusFilter === "owner_site"
-                  ? "border-violet-300 bg-violet-50 ring-1 ring-violet-200"
-                  : "border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/80",
-              )}
-            >
-              <p className={leadDetailMetaLabelClassName}>Owner Site</p>
-              <p className={leadDetailMetaTextClassName}>{ownerSiteUnits}</p>
-            </button>
+          <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+            {unitMetricFilters.map((metric) => (
+              <button
+                key={metric.id}
+                type="button"
+                onClick={() => handleUnitStatusFilter(metric.id)}
+                className={cn(
+                  "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                  unitStatusFilter === metric.id
+                    ? metric.activeClassName
+                    : cn(leadDetailStatCardClassName, "hover:bg-muted/50"),
+                )}
+              >
+                <p className={leadDetailMetaLabelClassName}>{metric.label}</p>
+                <p className={cn("text-lg font-semibold tabular-nums", metric.valueClassName)}>
+                  {metric.value}
+                </p>
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4 lg:flex-row lg:p-6">
-        <div className="w-full shrink-0 space-y-4 lg:w-[320px] xl:w-[340px]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto xl:overflow-hidden">
+        <div
+          className={cn(
+            "flex flex-col gap-4 p-3 sm:gap-5 sm:p-4 lg:p-6 xl:min-h-0 xl:flex-1 xl:flex-row xl:overflow-hidden",
+            leadDetailContentAreaClassName,
+          )}
+        >
+          <aside className="order-2 w-full space-y-4 xl:order-1 xl:w-[300px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar">
           <Card className={leadDetailCardClassName}>
             <CardContent className="p-5">
               <h3 className={cn(leadDetailSectionTitleClassName, "mb-1")}>Commercial</h3>
@@ -431,6 +410,7 @@ export default function ProjectDetailPage() {
                   value={String(project.price_per_sqft)}
                   label="Price per sq.ft (₹)"
                   type="number"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -442,6 +422,7 @@ export default function ProjectDetailPage() {
                   }
                   label="Price per cent (₹)"
                   type="number"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -451,6 +432,7 @@ export default function ProjectDetailPage() {
                   value={String(project.price_range_min)}
                   label="Min Price (₹)"
                   type="number"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -460,17 +442,18 @@ export default function ProjectDetailPage() {
                   value={String(project.price_range_max)}
                   label="Max Price (₹)"
                   type="number"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
-                <div className="flex items-start gap-3 border-b border-slate-100 py-3">
-                  <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-500">
+                <div className={cn("flex items-start gap-3 border-b border-border py-3")}>
+                  <div className={leadDetailIconBoxClassName}>
                     <Building className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    <p className={leadDetailSubsectionLabelClassName}>
                       Property Types
                     </p>
-                    <p className="mt-0.5 text-sm font-medium text-slate-900">{propertyTypeLabels}</p>
+                    <p className={cn(leadDetailFieldValueClassName, "mt-0.5")}>{propertyTypeLabels}</p>
                   </div>
                 </div>
               </div>
@@ -493,6 +476,7 @@ export default function ProjectDetailPage() {
                   value={project.rera_status}
                   label="RERA Status"
                   options={RERA_STATUS_OPTIONS}
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -501,6 +485,7 @@ export default function ProjectDetailPage() {
                   field="rera_number"
                   value={project.rera_number ?? ""}
                   label="RERA Number"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -509,6 +494,7 @@ export default function ProjectDetailPage() {
                   field="dtcp_status"
                   value={project.dtcp_status ?? ""}
                   label="DTCP Status"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -517,6 +503,7 @@ export default function ProjectDetailPage() {
                   field="dtcp_number"
                   value={project.dtcp_number ?? ""}
                   label="DTCP Number"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -525,6 +512,7 @@ export default function ProjectDetailPage() {
                   field="area_locality"
                   value={project.area_locality}
                   label="Locality"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
@@ -533,15 +521,20 @@ export default function ProjectDetailPage() {
                   field="location"
                   value={project.location}
                   label="City / District"
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
                 <EditableField
                   variant="detail"
                   icon={Building}
                   field="status"
-                  value={project.status}
-                  label="Project Status"
-                  options={PROJECT_STATUS_OPTIONS}
+                  value={
+                    resolveProjectStatusOption(project.status, projectStatusOptions)?.value ??
+                    project.status
+                  }
+                  label="Status"
+                  options={projectStatusOptions}
+                  canEdit={canEditProject}
                   onSave={handleFieldUpdate}
                 />
               </div>
@@ -554,7 +547,7 @@ export default function ProjectDetailPage() {
               {project.highlights.length > 0 ? (
                 <ul className="space-y-2">
                   {project.highlights.map((highlight) => (
-                    <li key={highlight} className="flex items-start gap-2 text-sm text-slate-700">
+                    <li key={highlight} className="flex items-start gap-2 text-sm text-foreground/90">
                       <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                       {highlight}
                     </li>
@@ -565,56 +558,76 @@ export default function ProjectDetailPage() {
               )}
             </CardContent>
           </Card>
-        </div>
+          </aside>
 
-        <div className="min-w-0 flex-1">
-          <Card className={cn(leadDetailCardClassName, "h-full overflow-hidden")}>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <div className="border-b border-slate-100 bg-white px-2">
-                <div className="px-4">
-                  <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto border-b-0 bg-transparent p-0">
-                    <TabsTrigger
-                      value="units"
-                      className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
-                    >
-                      Units ({coerceProjectUnits(project.units).length})
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="site-visits"
-                      className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
-                    >
-                      Site Visits ({project.site_visits.length})
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="matched-leads"
-                      className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
-                    >
-                      <Target className="mr-1.5 inline h-3.5 w-3.5" />
-                      Matched Leads ({matchedLeads.length})
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="documents"
-                      className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
-                    >
-                      Documents ({documentsCount})
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="overview"
-                      className="rounded-none border-b-2 border-transparent px-4 py-3.5 text-sm font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none"
-                    >
-                      Overview
-                    </TabsTrigger>
-                  </TabsList>
+          <div className="order-1 min-w-0 w-full xl:order-2 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
+            <Card className={cn(leadDetailCardClassName, "flex min-h-[min(480px,calc(100vh-16rem))] flex-col overflow-hidden xl:min-h-0 xl:flex-1")}>
+              <Tabs
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <div className={cn(leadDetailTabBarClassName, "shrink-0 px-2")}>
+                  <div className="overflow-x-auto px-4 [-webkit-overflow-scrolling:touch]">
+                    <TabsList className="flex h-auto w-max min-w-full justify-start gap-0.5 border-b-0 bg-transparent p-0 sm:gap-1">
+                      <TabsTrigger
+                        value="units"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
+                      >
+                        Units ({coerceProjectUnits(project.units).length})
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="site-visits"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
+                      >
+                        Site Visits ({project.site_visits.length})
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="matched-leads"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
+                      >
+                        <Target className="mr-1.5 inline h-3.5 w-3.5" />
+                        Matched Leads ({matchedLeads.length})
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="documents"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
+                        disabled={!canViewProjectDocuments}
+                      >
+                        Documents ({documentsCount})
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="overview"
+                        className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
+                      >
+                        Overview
+                      </TabsTrigger>
+                    </TabsList>
+                  </div>
                 </div>
-              </div>
 
-              <div className="p-5 lg:p-6">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-3 sm:p-5 lg:p-6">
                 <TabsContent value="units" forceMount className="m-0 data-[state=inactive]:hidden">
                   <UnitsPanel
                     projectId={project._id}
                     units={project.units}
                     statusFilter={unitStatusFilter}
-                    onRefresh={() => loadProject({ silent: true })}
+                    statusOptions={statusOptions}
+                    onRefresh={() => refreshProject({ silent: true })}
+                    permissions={{
+                      canCreate: canEditProject,
+                      canEdit: canEditProject,
+                      canDelete: canEditProject,
+                      fields: {
+                        unit_no: canEditProject,
+                        block: canEditProject,
+                        property_type: canEditProject,
+                        area: canEditProject,
+                        price_per_sqft: canEditProject,
+                        total_price: canEditProject,
+                        status: canEditProject,
+                      },
+                    }}
                   />
                 </TabsContent>
 
@@ -622,7 +635,7 @@ export default function ProjectDetailPage() {
                   <SiteVisitsPanel
                     projectId={project._id}
                     siteVisits={project.site_visits}
-                    onRefresh={() => loadProject({ silent: true })}
+                    onRefresh={() => refreshProject({ silent: true })}
                   />
                 </TabsContent>
 
@@ -631,12 +644,19 @@ export default function ProjectDetailPage() {
                 </TabsContent>
 
                 <TabsContent value="documents" forceMount className="m-0 data-[state=inactive]:hidden">
-                  <ProjectDocumentsPanel
-                    projectId={projectId}
-                    documents={project.documents}
-                    onDocumentsCountChange={setDocumentsCount}
-                    onRefresh={() => loadProject({ silent: true })}
-                  />
+                  {!canViewProjectDocuments ? (
+                    <p className={cn(leadDetailBodyMutedClassName, "py-4")}>
+                      You don&apos;t have permission to view documents.
+                    </p>
+                  ) : (
+                    <ProjectDocumentsPanel
+                      projectId={projectId}
+                      documents={project.documents}
+                      canAddDocument={canAddProjectDocument}
+                      canDownloadDocument={canDownloadProjectDocument}
+                      onRefresh={() => refreshProject({ silent: true })}
+                    />
+                  )}
                 </TabsContent>
 
                 <TabsContent value="overview" forceMount className="m-0 space-y-4 data-[state=inactive]:hidden">
@@ -647,15 +667,16 @@ export default function ProjectDetailPage() {
                       value={project.description ?? ""}
                       label="Project Description"
                       isTextarea
+                      canEdit={canEditProject}
                       onSave={handleFieldUpdate}
                     />
                   </div>
-                  <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-4">
+                  <div className="rounded-lg border border-border bg-muted/50 p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <Users className="h-4 w-4 text-slate-500" />
+                      <Users className="h-4 w-4 text-muted-foreground" />
                       <h3 className={leadDetailSectionTitleClassName}>Lead Matching Band</h3>
                     </div>
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-muted-foreground">
                       Budget {formatIndianCurrency(project.budget_min)} –{" "}
                       {formatIndianCurrency(project.budget_max)} · Types: {propertyTypeLabels}
                     </p>
@@ -667,5 +688,6 @@ export default function ProjectDetailPage() {
         </div>
       </div>
     </div>
+  </div>
   )
 }

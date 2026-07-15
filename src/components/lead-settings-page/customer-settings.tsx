@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, type Dispatch, type SetStateAction } from "react"
+import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from "react"
 import { useRouter } from "next/navigation"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, MoreVertical, Pencil, Plus, Trash, Move, GripVertical } from "lucide-react"
 import {
   DndContext,
@@ -27,6 +28,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { AddStatusDialog } from "./add-status-dialog"
@@ -42,6 +44,14 @@ import {
 import { CustomerTypeDialog, type CustomerTypeData } from "./customer-type-dialog"
 import URLS from "@/config/urls"
 import { THEME_PRIMARY_COLOR } from "@/lib/form-field-styles"
+import { useUserData } from "@/hooks/useUserData"
+import { resolveAuthUserId } from "@/lib/auth"
+import {
+  LEAD_SETTINGS_QUERY_KEY,
+  fetchLeadSettingsList,
+  invalidateLeadSettingsCache,
+  type LeadSettingsListData,
+} from "@/lib/leads/lead-shared-queries"
 
 // Status badge component for NOT QUALIFIED status
 function StatusBadge({ name, isNotQualified, showFullDisplay = true }: { name: string; isNotQualified: boolean; showFullDisplay?: boolean }) {
@@ -152,18 +162,22 @@ function buildLeadSettingsInfo(
 function mapSettingOptions(
   item: Record<string, unknown>,
   info: Record<string, unknown>,
-) {
+): Item["options"] {
   const rawOptions = (item.options ?? info.options) as
     | Array<{ _id?: string; id?: string | number; name: string; color?: string }>
     | undefined
 
   if (!Array.isArray(rawOptions)) return undefined
 
-  return rawOptions.map((option, index) => ({
-    id: option._id || option.id || index + 1,
-    name: option.name,
-    color: option.color || THEME_PRIMARY_COLOR,
-  }))
+  return rawOptions.map((option, index) => {
+    const rawId = option.id ?? index + 1
+    const numericId = typeof rawId === "number" ? rawId : Number.parseInt(String(rawId), 10)
+    return {
+      id: Number.isFinite(numericId) ? numericId : index + 1,
+      name: option.name,
+      color: option.color || THEME_PRIMARY_COLOR,
+    }
+  })
 }
 
 function mapSimpleSettingItems(
@@ -273,194 +287,185 @@ export function CustomerSettings() {
   }>({});
 
   const { toast } = useToast()
-  const router = useRouter();
-  const [userData, setUserData] = useState<any>(null);
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  const { userData, isAuthLoading } = useUserData()
+  const token = userData?.access_token as string | undefined
+  const currentUserId = resolveAuthUserId(userData ?? {})
 
+  const userDefaultSettingsRef = useRef(userDefaultSettings)
+  userDefaultSettingsRef.current = userDefaultSettings
 
-  useEffect(() => {
-    const storedData = localStorage.getItem('map_user');
-    if (storedData) {
-      const userData = JSON.parse(storedData);
-      console.log("userData1:", userData);
-      if (userData) {
-        setUserData(userData);
-        
-        // Load user-specific default settings
-        const userId = userData?.id || userData?._id;
-        const userDefaultSettingsStr = localStorage.getItem(`map_user_defaults_${userId}`);
-        if (userDefaultSettingsStr) {
-          try {
-            const userDefaults = JSON.parse(userDefaultSettingsStr);
-            setUserDefaultSettings(userDefaults);
-          } catch (e) {
-            console.error("Failed to parse user default settings", e);
-          }
-        }
+  const applySettingsData = useCallback((data: LeadSettingsListData) => {
+    const defaults = userDefaultSettingsRef.current
+
+    const formattedStatuses = (data.lead_status || []).map((status: Record<string, unknown>) => {
+      const info = parseSettingInfo(status.info)
+      const statusId = resolveSettingId(status as { _id?: string; id?: string | number })
+      let isDefault = false
+      if (defaults?.statusId) {
+        isDefault = defaults.statusId === String(statusId)
       } else {
-        router.push('/login');
+        isDefault = status.default === 1
       }
-    } else {
-      router.push('/login');
-    }
-  }, [router]);
-  
-  // Move fetchSettings outside of useEffect so it's accessible to handler functions
-  const fetchSettings = async () => {
-      const fetchDefaultStatus = async () => {
-        const storedData = localStorage.getItem("map_user");
-        if (!storedData) {
-          console.error("No user data found in localStorage");
-          router.push("/login");
-          return null;
-        }
-
-        const userData = JSON.parse(storedData);
-        const token = userData?.access_token;
-
-        if (!token) {
-          console.error("Access token is missing");
-          router.push("/login");
-          return null;
-        }
-
-        return token;
-      };
-
-      const token = await fetchDefaultStatus();
-      if (!token) return; // Stop execution if token is invalid
-
-      try {
-        const response = await fetch(URLS.LEAD_SETTINGS_LIST, {
-          headers: {
-            Authorization: `Bearer ${token}`, // Include token in request if required
-          },
-        });
-
-        const result = await response.json()
-
-        if (response.ok && result.code === 200) {
-          const data = result.data || {}
-
-          const formattedStatuses = (data.lead_status || []).map((status: Record<string, unknown>) => {
-            const info = parseSettingInfo(status.info)
-            const statusId = resolveSettingId(status as { _id?: string; id?: string | number })
-            let isDefault = false
-            if (userDefaultSettings?.statusId) {
-              isDefault = userDefaultSettings.statusId === String(statusId)
-            } else {
-              isDefault = status.default === 1
-            }
-            return {
-              id: statusId,
-              name: status.name as string,
-              color: (status.color as string) || "#000000",
-              fieldType:
-                (status.field_type as string) ||
-                (status.fieldType as string) ||
-                (info.field_type as string) ||
-                "text",
-              options: mapSettingOptions(status, info),
-              isDefault,
-              createdOn: status.create_date as string,
-              sort_order: (status.sort_order as number) || 0,
-              not_qualified: (status.not_qualified as number) || 0,
-            }
-          })
-          // Sort by sort_order
-          const sortedStatuses = formattedStatuses.sort((a: Item, b: Item) => (a.sort_order || 0) - (b.sort_order || 0));
-          setStatuses(sortedStatuses);
-
-          setSources(mapSimpleSettingItems(data.source, userDefaultSettings?.sourceId))
-
-          setPaymentTerms(
-            mapSimpleSettingItems(
-              data.payment_terms || data.payment_term,
-              userDefaultSettings?.paymentTermsId,
-            ),
-          )
-
-          setCustomerTypes(
-            (data.customer_type || []).map((customerType: Record<string, unknown>) => {
-              const info = parseSettingInfo(customerType.info)
-              return {
-                id: resolveSettingId(customerType as { _id?: string; id?: string | number }),
-                name: customerType.name as string,
-                color: (customerType.color as string) || "#000000",
-                fieldType:
-                  (customerType.field_type as string) ||
-                  (customerType.fieldType as string) ||
-                  (info.field_type as string) ||
-                  "dropdown-single",
-                options: mapSettingOptions(customerType, info),
-                currency: (customerType.currency as string) || (info.currency as string),
-                isDefault:
-                  customerType.default === 1 ||
-                  userDefaultSettings?.customerTypeId === customerType._id,
-                createdOn: customerType.create_date as string,
-              }
-            }),
-          )
-
-          setCustomerRequirements(
-            (data.customer_requirement || []).map((item: Record<string, unknown>) => {
-              const info = parseSettingInfo(item.info)
-              return {
-                id: resolveSettingId(item as { _id?: string; id?: string | number }),
-                name: item.name as string,
-                color: (item.color as string) || "#000000",
-                fieldType:
-                  (item.field_type as string) ||
-                  (item.fieldType as string) ||
-                  (info.field_type as string) ||
-                  "text",
-                options: mapSettingOptions(item, info),
-                currency: (item.currency as string) || (info.currency as string),
-                isDefault:
-                  item.default === 1 || userDefaultSettings?.customerRequirementId === item._id,
-                createdOn: item.create_date as string,
-              }
-            }),
-          )
-          
-          // Not Qualified Reasons
-          const nqrArray =
-            data?.not_qualified_reasons ||
-            data?.not_qualified_reason ||
-            (Array.isArray(data?.settings)
-              ? data.settings.filter((s: any) => s.type === "not_qualified_reason")
-              : []);
-          const mappedNqr = Array.isArray(nqrArray)
-            ? nqrArray.map((item: any) => ({
-                id: item?._id?.$oid || item?._id,
-                name: item?.name,
-                color: item?.color || "#000000",
-                isDefault: false, // Not Qualified Reasons do not have a default option concept
-                createdOn: item?.create_date,
-              }))
-            : [];
-          setNotQualifiedReasons(mappedNqr);
-        } else {
-          toast({
-            title: "Error fetching data",
-            description: result.msg || "Failed to fetch settings data.",
-          })
-        }
-      } catch (error) {
-        toast({
-          title: "Error fetching data",
-          description: "An unexpected error occurred while fetching settings data.",
-        });
+      return {
+        id: statusId,
+        name: status.name as string,
+        color: (status.color as string) || "#000000",
+        fieldType:
+          (status.field_type as string) ||
+          (status.fieldType as string) ||
+          (info.field_type as string) ||
+          "text",
+        options: mapSettingOptions(status, info),
+        isDefault,
+        createdOn: status.create_date as string,
+        sort_order: (status.sort_order as number) || 0,
+        not_qualified: (status.not_qualified as number) || 0,
       }
-    };
+    })
+    setStatuses(
+      formattedStatuses.sort((a: Item, b: Item) => (a.sort_order || 0) - (b.sort_order || 0)),
+    )
 
-  // Call fetchSettings when component mounts or dependencies change
+    setSources(mapSimpleSettingItems(data.source, defaults?.sourceId))
+
+    setPaymentTerms(
+      mapSimpleSettingItems(
+        data.payment_terms || data.payment_term,
+        defaults?.paymentTermsId,
+      ),
+    )
+
+    setCustomerTypes(
+      (data.customer_type || []).map((customerType: Record<string, unknown>) => {
+        const info = parseSettingInfo(customerType.info)
+        const id = resolveSettingId(customerType as { _id?: string; id?: string | number })
+        return {
+          id,
+          name: customerType.name as string,
+          color: (customerType.color as string) || "#000000",
+          fieldType:
+            (customerType.field_type as string) ||
+            (customerType.fieldType as string) ||
+            (info.field_type as string) ||
+            "dropdown-single",
+          options: mapSettingOptions(customerType, info),
+          currency: (customerType.currency as string) || (info.currency as string),
+          isDefault: customerType.default === 1 || defaults?.customerTypeId === String(id),
+          createdOn: customerType.create_date as string,
+        }
+      }),
+    )
+
+    setCustomerRequirements(
+      (data.customer_requirement || []).map((item: Record<string, unknown>) => {
+        const info = parseSettingInfo(item.info)
+        const id = resolveSettingId(item as { _id?: string; id?: string | number })
+        return {
+          id,
+          name: item.name as string,
+          color: (item.color as string) || "#000000",
+          fieldType:
+            (item.field_type as string) ||
+            (item.fieldType as string) ||
+            (info.field_type as string) ||
+            "text",
+          options: mapSettingOptions(item, info),
+          currency: (item.currency as string) || (info.currency as string),
+          isDefault: item.default === 1 || defaults?.customerRequirementId === String(id),
+          createdOn: item.create_date as string,
+        }
+      }),
+    )
+
+    const nqrArray =
+      data?.not_qualified_reasons ||
+      data?.not_qualified_reason ||
+      (Array.isArray(data?.settings)
+        ? data.settings.filter(
+            (s) => (s as { type?: string }).type === "not_qualified_reason",
+          )
+        : [])
+    const mappedNqr = Array.isArray(nqrArray)
+      ? nqrArray.map((item) => {
+          const record = item as Record<string, unknown>
+          return {
+            id: resolveSettingId(record as { _id?: string; id?: string | number }),
+            name: record?.name as string,
+            color: (record?.color as string) || "#000000",
+            isDefault: false,
+            createdOn: record?.create_date as string,
+          }
+        })
+      : []
+    setNotQualifiedReasons(mappedNqr)
+  }, [])
+
   useEffect(() => {
-    fetchSettings();
-  }, [router, toast]);
+    if (isAuthLoading) return
+    if (!currentUserId) {
+      router.push("/login")
+      return
+    }
 
+    const userDefaultSettingsStr = localStorage.getItem(`map_user_defaults_${currentUserId}`)
+    let nextDefaults: typeof userDefaultSettings = {}
+    if (userDefaultSettingsStr) {
+      try {
+        nextDefaults = JSON.parse(userDefaultSettingsStr)
+        setUserDefaultSettings(nextDefaults)
+      } catch (e) {
+        console.error("Failed to parse user default settings", e)
+      }
+    }
 
+    // Sync ref immediately so applySettingsData sees personal defaults even when
+    // React Query hydrates lead_settings_list from cache on the first paint.
+    userDefaultSettingsRef.current = nextDefaults
+    const cached = queryClient.getQueryData<LeadSettingsListData>(LEAD_SETTINGS_QUERY_KEY)
+    if (cached) {
+      applySettingsData(cached)
+    }
+  }, [isAuthLoading, currentUserId, router, queryClient, applySettingsData])
+
+  const {
+    data: settingsData,
+    isLoading: isSettingsLoading,
+    isError: isSettingsError,
+    error: settingsError,
+  } = useQuery({
+    queryKey: LEAD_SETTINGS_QUERY_KEY,
+    queryFn: () => fetchLeadSettingsList(token),
+    enabled: Boolean(token) && !isAuthLoading,
+  })
+
+  // Only remap lists when server data changes — not when personal defaults update
+  // (defaults are applied optimistically so local adds/edits are not wiped).
+  useEffect(() => {
+    if (!settingsData) return
+    applySettingsData(settingsData)
+  }, [settingsData, applySettingsData])
+
+  useEffect(() => {
+    if (!isSettingsError) return
+    toast({
+      title: "Error fetching data",
+      description:
+        settingsError instanceof Error
+          ? settingsError.message
+          : "An unexpected error occurred while fetching settings data.",
+      variant: "destructive",
+    })
+  }, [isSettingsError, settingsError, toast])
+
+  const markSettingsCacheStale = useCallback(() => {
+    void invalidateLeadSettingsCache(queryClient)
+  }, [queryClient])
 
   const getAuthToken = async (): Promise<string | null> => {
+    if (token) return token
+
     const storedData = localStorage.getItem("map_user")
     if (!storedData) {
       router.push("/login")
@@ -468,14 +473,14 @@ export function CustomerSettings() {
     }
 
     const parsed = JSON.parse(storedData)
-    const token = parsed?.access_token
+    const accessToken = parsed?.access_token
 
-    if (!token) {
+    if (!accessToken) {
       router.push("/login")
       return null
     }
 
-    return token
+    return accessToken
   }
 
   const handleAddSimpleSetting = async (
@@ -516,6 +521,7 @@ export function CustomerSettings() {
         }
 
         setItems([...items, newItem])
+        markSettingsCacheStale()
       } else {
         throw new Error(responseData.msg || labels.failed)
       }
@@ -690,6 +696,7 @@ export function CustomerSettings() {
         }
 
         setCustomerTypes([...customerTypes, newCustomerType])
+        markSettingsCacheStale()
       } else {
         throw new Error(responseData.msg || "Failed to add customer type")
       }
@@ -758,6 +765,7 @@ export function CustomerSettings() {
         }
 
         setCustomerRequirements([...customerRequirements, newCustomerRequirement])
+        markSettingsCacheStale()
       } else {
         throw new Error(responseData.msg || "Failed to Add Interested In")
       }
@@ -808,6 +816,7 @@ export function CustomerSettings() {
             String(item.id) === id ? { ...item, name: data.name, color: data.color } : item,
           ),
         )
+        markSettingsCacheStale()
 
         toast({
           title: labels.updated,
@@ -905,16 +914,15 @@ export function CustomerSettings() {
     id: string,
   ) => {
     if (!userData) return;
-    
-    // Safely access the user ID
-    const userId = userData?.id || userData?._id;
+
+    const userId = resolveAuthUserId(userData)
     if (!userId) return;
-    
+
     const newDefaults = {
       ...userDefaultSettings,
       userId,
     };
-    
+
     if (type === 'status') {
       newDefaults.statusId = id;
     } else if (type === 'source') {
@@ -928,7 +936,7 @@ export function CustomerSettings() {
     } else if (type === 'notQualifiedReason') {
       newDefaults.notQualifiedReasonId = id;
     }
-    
+
     localStorage.setItem(`map_user_defaults_${userId}`, JSON.stringify(newDefaults));
     setUserDefaultSettings(newDefaults);
   };
@@ -969,16 +977,13 @@ export function CustomerSettings() {
         // Update user's personal default setting
         updateUserDefaultSetting('status', id);
         
-        // Immediately update the UI without waiting for fetchSettings
         setStatuses(prevStatuses => 
           prevStatuses.map(status => ({
             ...status,
             isDefault: String(status.id) === id
           }))
         );
-        
-        // Still call fetchSettings to ensure everything is in sync
-        fetchSettings();
+        markSettingsCacheStale()
 
         toast({
           title: "Default status updated",
@@ -1020,7 +1025,16 @@ export function CustomerSettings() {
 
       if (response.ok && data.code === 200) {
         updateUserDefaultSetting(defaultKey, id)
-        fetchSettings()
+        if (defaultKey === "source") {
+          setSources((prev) =>
+            prev.map((item) => ({ ...item, isDefault: String(item.id) === id })),
+          )
+        } else if (defaultKey === "paymentTerms") {
+          setPaymentTerms((prev) =>
+            prev.map((item) => ({ ...item, isDefault: String(item.id) === id })),
+          )
+        }
+        markSettingsCacheStale()
 
         toast({
           title: labels.success,
@@ -1086,9 +1100,14 @@ export function CustomerSettings() {
       const data = await response.json()
 
       if (response.ok && data.code === 200) {
-        // Update user's personal default setting for customer type
         updateUserDefaultSetting('customerType', id);
-        fetchSettings(); // Refresh data from the API
+        setCustomerTypes((prev) =>
+          prev.map((item) => ({
+            ...item,
+            isDefault: String(item.id) === id,
+          })),
+        )
+        markSettingsCacheStale()
 
         toast({
           title: "Default customer type updated",
@@ -1140,7 +1159,13 @@ export function CustomerSettings() {
 
       if (response.ok && data.code === 200) {
         updateUserDefaultSetting("customerRequirement", id);
-        fetchSettings();
+        setCustomerRequirements((prev) =>
+          prev.map((item) => ({
+            ...item,
+            isDefault: String(item.id) === id,
+          })),
+        )
+        markSettingsCacheStale()
 
         toast({
           title: "Default Interested In updated",
@@ -1218,6 +1243,7 @@ export function CustomerSettings() {
 
       if (response.ok && data.code === 200) {
         setStatuses(statuses.filter((status) => status.id !== deletingStatus.id))
+        markSettingsCacheStale()
         toast({
           title: "Status deleted",
           description: `The status "${deletingStatus.name}" has been deleted successfully.`,
@@ -1268,6 +1294,7 @@ export function CustomerSettings() {
           : status,
       ),
     )
+    markSettingsCacheStale()
   }
 
   const handleAddStatus = (data: {
@@ -1289,6 +1316,7 @@ export function CustomerSettings() {
         not_qualified: 0,
       },
     ])
+    markSettingsCacheStale()
   }
 
   // Source handlers
@@ -1376,6 +1404,7 @@ export function CustomerSettings() {
 
       if (response.ok && data.code === 200) {
         setItems(items.filter((entry) => entry.id !== item.id))
+        markSettingsCacheStale()
         toast({
           title: labels.deleted,
           description: `"${item.name}" has been deleted successfully.`,
@@ -1497,6 +1526,7 @@ export function CustomerSettings() {
               : customerType,
           ),
         )
+        markSettingsCacheStale()
 
         toast({
           title: "Customer Type updated",
@@ -1551,6 +1581,7 @@ export function CustomerSettings() {
 
         if (response.ok && data.code === 200) {
           setCustomerTypes(customerTypes.filter((customerType) => customerType.id !== deletingCustomerType.id))
+          markSettingsCacheStale()
           toast({
             title: "Customer Type deleted",
             description: `The customer type "${deletingCustomerType.name}" has been deleted successfully.`,
@@ -1624,6 +1655,7 @@ export function CustomerSettings() {
               : customerRequirement,
           ),
         )
+        markSettingsCacheStale()
 
         toast({
           title: "Interested In updated",
@@ -1682,6 +1714,7 @@ export function CustomerSettings() {
               (customerRequirement) => customerRequirement.id !== deletingCustomerRequirement.id,
             ),
           )
+          markSettingsCacheStale()
           toast({
             title: "Interested In deleted",
             description: `The Interested In "${deletingCustomerRequirement.name}" has been deleted successfully.`,
@@ -1766,6 +1799,7 @@ export function CustomerSettings() {
           sort_order: index + 1,
         }))
         setStatuses(updatedStatuses)
+        markSettingsCacheStale()
 
         toast({
           title: "Order updated",
@@ -1789,6 +1823,17 @@ export function CustomerSettings() {
   return (
     <div className="flex flex-col gap-4 pt-2">
       <h1 className="text-xl font-semibold text-gray-800">Lead</h1>
+      {isAuthLoading || (isSettingsLoading && statuses.length === 0) ? (
+        <Card className="border-none shadow-sm">
+          <CardContent className="space-y-3 pt-6">
+            <Skeleton className="h-9 w-full max-w-xl" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </CardContent>
+        </Card>
+      ) : (
       <Card className="border-none shadow-sm">
         <CardContent>
         <Tabs defaultValue="statuses" className="w-full" onValueChange={setActiveTab}>
@@ -2421,6 +2466,7 @@ export function CustomerSettings() {
         </Tabs>
         </CardContent>
       </Card>
+      )}
 
       {/* Status Dialogs */}
       {/* <EditStatusDialog

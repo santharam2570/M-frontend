@@ -130,20 +130,22 @@ export function TaskItem({ task, showTime = false }: TaskItemProps) {
     const associateId = task.associateId || task.companyId
 
     switch (module) {
-      case "opportunity":
-        return associateId ? `/opportunity/detail/${associateId}` : "/opportunity"
       case "lead":
         return associateId ? `/lead/detail/${associateId}` : "/lead"
       case "partner_request":
-        return associateId ? `/partner-request/detail/${associateId}` : "/partner-request"
+        return "/partner-request"
       case "onboarding":
-        return associateId ? `/partner-onboarding/detail/${associateId}` : "/partner-onboarding"
+        return "/partner-onboarding"
       case "partner":
-        return associateId ? `/partners/detail/${associateId}` : "/partners"
+        return "/partners"
       case "company":
-        return associateId ? `/company/detail/${associateId}` : "/company"
+        return "/company"
+      case "booking":
+        return "/bookings"
+      case "project":
+        return associateId ? `/projects/detail/${associateId}` : "/projects"
       default:
-        return `/taskdetail/${task.id}`
+        return "/calendar"
     }
   }
 

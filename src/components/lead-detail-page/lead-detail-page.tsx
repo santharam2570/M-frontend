@@ -16,7 +16,6 @@ import {
   User,
   ChevronRight,
   FileText,
-  ThumbsUp,
   ThumbsDown,
   ChevronDown,
   Plus,
@@ -37,6 +36,7 @@ import {
   AlertTriangle,
   Building,
   Hash,
+  Shield,
   Link as Linkedin,
   Award,
   Briefcase,
@@ -71,8 +71,20 @@ import {
   leadDetailBodyClassName,
   leadDetailBodyMutedClassName,
   leadDetailCaptionClassName,
+  leadDetailCardClassName,
+  leadDetailActionButtonClassName,
+  leadDetailActivityCardClassName,
+  leadDetailContactRowClassName,
+  leadDetailContentAreaClassName,
+  leadDetailDashedEmptyClassName,
   leadDetailFieldLabelClassName,
   leadDetailFieldValueClassName,
+  leadDetailHeaderClassName,
+  leadDetailIconBoxClassName,
+  leadDetailIconBoxSmClassName,
+  leadDetailListItemClassName,
+  leadDetailPageBackgroundClassName,
+  leadDetailPopoverClassName,
   leadDetailSidebarFieldLabelClassName,
   leadDetailSidebarFieldValueClassName,
   leadDetailInlineFieldClassName,
@@ -81,6 +93,8 @@ import {
   leadDetailPageTitleClassName,
   leadDetailSectionTitleClassName,
   leadDetailSubsectionLabelClassName,
+  leadDetailTabBarClassName,
+  leadDetailTimelineLineClassName,
 } from "@/lib/form-field-styles"
 import {
   Sheet,
@@ -125,7 +139,34 @@ import { EditableTitle } from "./editable-title"
 import { AddContactDrawer } from "@/components/all-contacts/add-contact-drawer"
 import { EditContactDrawer } from "@/components/all-contacts/edit-contact-drawer"
 import { useToast } from "@/hooks/use-toast"
+import { useLeadPermissions } from "@/hooks/useLeadPermissions"
+import { getOrgIdFromAuth } from "@/lib/auth"
+import {
+  buildUserBranchMap,
+  filterAssignableUsersForLead,
+  type AssignableUser,
+} from "@/lib/users/assignable-users"
+import {
+  LEAD_SETTINGS_QUERY_KEY,
+  PROJECT_LIST_QUERY_KEY,
+  LEAD_DETAIL_STALE_MS,
+  assignableUsersQueryKey,
+  fetchCachedAssignableUsers,
+  fetchLeadSettingsList,
+} from "@/lib/leads/lead-shared-queries"
+import {
+  fetchLeadActivityRaw,
+  fetchLeadAssociatesRaw,
+  fetchLeadDetailRaw,
+  leadActivityQueryKey,
+  leadAssociatesQueryKey,
+  leadDetailQueryKey,
+  leadDetailSnapshotQueryKey,
+  leadMatchedProjectsQueryKey,
+  mergeAbortSignals,
+} from "@/lib/leads/lead-detail-api"
 import AddNoteDrawer from "@/components/all-notes/add-note-drawer"
+import { DeleteItemAlert } from "@/components/ui/delete-item-alert"
 import { Trash2 } from "lucide-react"
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon"
 import { useRouter } from 'next/navigation'
@@ -135,16 +176,16 @@ import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import { CalendarIcon, Loader2 } from "lucide-react"
 import { EditTaskSheet } from "@/components/all-details-followup-tasks/edit-task-sheet"
-import { VISIT_TIME_OPTIONS, fetchActiveTaskUsers, mergeTaskUserLists, normalizeAssociatesUsers } from "@/components/all-lists-followup-tasks/config"
-import { DynamicProductSelector } from "@/components/opportunity-product-selector"
+import { VISIT_TIME_OPTIONS, mergeTaskUserLists, normalizeAssociatesUsers } from "@/components/all-lists-followup-tasks/config"
 import { useAiChatContext } from "@/components/ai-chat/ai-chat-context"
 import { SuggestedProjectsCard } from "@/components/lead-detail-page/suggested-projects-card"
-import { fetchLeadMatchedProjects } from "@/lib/projects/project-api"
-import type { MatchedProject } from "@/lib/projects/types"
 import {
-  fetchLeadSuggestedProjects,
-  getStoredLeadSuggestedProjects,
-} from "@/lib/leads/lead-api"
+  fetchLeadMatchedProjects,
+  fetchProjectList,
+  matchProjectsForLead,
+} from "@/lib/projects/project-api"
+import type { MatchedProject } from "@/lib/projects/types"
+import { getStoredLeadSuggestedProjects } from "@/lib/leads/lead-api"
 import React from "react"
 // Move CustomFieldDisplay component outside of the main component
 const CustomFieldDisplay = ({ 
@@ -235,21 +276,21 @@ const CustomFieldDisplay = ({
   const getFieldIcon = () => {
     switch (field.field_type) {
       case "dropdown-single":
-        return <ChevronDown className="h-4 w-4 text-gray-500 mr-2" />
+        return <ChevronDown className="h-4 w-4 text-muted-foreground mr-2" />
       case "dropdown-multiple":
-        return <CheckSquare className="h-4 w-4 text-gray-500 mr-2" />
+        return <CheckSquare className="h-4 w-4 text-muted-foreground mr-2" />
       case "checkbox":
-        return <CheckSquare className="h-4 w-4 text-gray-500 mr-2" />
+        return <CheckSquare className="h-4 w-4 text-muted-foreground mr-2" />
       case "date":
-        return <Calendar className="h-4 w-4 text-gray-500 mr-2" />
+        return <Calendar className="h-4 w-4 text-muted-foreground mr-2" />
       case "money":
-        return <Hash className="h-4 w-4 text-gray-500 mr-2" />
+        return <Hash className="h-4 w-4 text-muted-foreground mr-2" />
       case "phone":
-        return <Phone className="h-4 w-4 text-gray-500 mr-2" />
+        return <Phone className="h-4 w-4 text-muted-foreground mr-2" />
       case "number":
-        return <Hash className="h-4 w-4 text-gray-500 mr-2" />
+        return <Hash className="h-4 w-4 text-muted-foreground mr-2" />
       default:
-        return <Tag className="h-4 w-4 text-gray-500 mr-2" />
+        return <Tag className="h-4 w-4 text-muted-foreground mr-2" />
     }
   }
 
@@ -297,7 +338,7 @@ const CustomFieldDisplay = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 ml-1 text-transparent hover:text-gray-700"
+                className="h-8 w-8 ml-1 text-transparent hover:text-foreground"
                 onClick={startEditCustomField}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -351,7 +392,7 @@ const CustomFieldDisplay = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 ml-1 text-transparent hover:text-gray-700"
+                className="h-8 w-8 ml-1 text-transparent hover:text-foreground"
                 onClick={startEditCustomField}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -397,7 +438,7 @@ const CustomFieldDisplay = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 ml-1 text-transparent hover:text-gray-700"
+                className="h-8 w-8 ml-1 text-transparent hover:text-foreground"
                 onClick={startEditCustomField}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -443,7 +484,7 @@ const CustomFieldDisplay = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 ml-1 text-transparent hover:text-gray-700"
+                className="h-8 w-8 ml-1 text-transparent hover:text-foreground"
                 onClick={startEditCustomField}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -504,7 +545,7 @@ const CustomFieldDisplay = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 ml-1 text-transparent hover:text-gray-700"
+                className="h-8 w-8 ml-1 text-transparent hover:text-foreground"
                 onClick={startEditCustomField}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -549,7 +590,7 @@ const CustomFieldDisplay = ({
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 ml-1 text-transparent hover:text-gray-700"
+              className="h-8 w-8 ml-1 text-transparent hover:text-foreground"
               onClick={startEditCustomField}
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -947,6 +988,28 @@ interface LeadActivityDocument {
   [key: string]: unknown
 }
 
+const getDocumentId = (doc: LeadActivityDocument) => String(doc._id ?? doc.id ?? "")
+
+const applyDeletedDocumentFilter = (
+  documents: LeadActivityDocument[],
+  deletedIds: Set<string>,
+) => {
+  if (deletedIds.size === 0) return documents
+  return documents.filter((doc) => !deletedIds.has(getDocumentId(doc)))
+}
+
+const reconcileDeletedDocumentIds = (
+  serverDocuments: LeadActivityDocument[],
+  deletedIds: Set<string>,
+) => {
+  for (const id of [...deletedIds]) {
+    const stillOnServer = serverDocuments.some((doc) => getDocumentId(doc) === id)
+    if (!stillOnServer) {
+      deletedIds.delete(id)
+    }
+  }
+}
+
 interface LeadActivityData {
   notes: LeadActivityNote[]
   email: LeadActivityEmail[]
@@ -997,6 +1060,158 @@ const getActivityCreateBy = (item: Record<string, unknown>): string => {
   }
   const createById = item.create_by
   return typeof createById === "string" ? createById : ""
+}
+
+const ACTIVITY_DEDUPE_WINDOW_MS = 5 * 60 * 1000
+
+const getActivityTimestampMs = (item: Record<string, unknown>): number => {
+  const time = new Date(getActivitySortTimestamp(item)).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+const normalizeComparableText = (value: string) =>
+  value.toLowerCase().replace(/[\s,_-]+/g, "").trim()
+
+const extractUploadedDocumentName = (text: string) => {
+  const match = text.match(/uploaded document:?\s*(.+)$/i)
+  return match?.[1]?.trim() ?? ""
+}
+
+const areComparableFileNames = (a: string, b: string) => {
+  const normalizedA = normalizeComparableText(a)
+  const normalizedB = normalizeComparableText(b)
+  if (!normalizedA || !normalizedB) return false
+  if (normalizedA === normalizedB) return true
+
+  const stripExt = (name: string) => name.replace(/\.[^.]+$/, "")
+  const baseA = stripExt(normalizedA)
+  const baseB = stripExt(normalizedB)
+  return baseA === baseB || baseA.includes(baseB) || baseB.includes(baseA)
+}
+
+const isActivityWithinDedupeWindow = (
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+) => {
+  const timeDiff = Math.abs(getActivityTimestampMs(a) - getActivityTimestampMs(b))
+  return timeDiff <= ACTIVITY_DEDUPE_WINDOW_MS
+}
+
+const haveSameActivityAuthor = (
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+) => {
+  const authorA = getActivityCreateBy(a)
+  const authorB = getActivityCreateBy(b)
+  if (!authorA || !authorB) return true
+  return authorA === authorB
+}
+
+const isDocumentActivityMatch = (
+  timelineItem: LeadActivityTimelineItem,
+  fileName: string,
+) => {
+  const category = String(timelineItem.category_name ?? timelineItem.action ?? "").toLowerCase()
+  if (category !== "document") return false
+
+  const text = String(timelineItem.text_info ?? "")
+  if (!/uploaded document/i.test(text)) return false
+
+  const timelineFileName = extractUploadedDocumentName(text)
+  return areComparableFileNames(timelineFileName, fileName)
+}
+
+const isDocumentCoveredByTimeline = (
+  doc: LeadActivityDocument,
+  timeline: LeadActivityTimelineItem[],
+) => {
+  const fileName = String(doc.user_file_name ?? "")
+  if (!fileName) return false
+
+  const docRecord = doc as Record<string, unknown>
+  return timeline.some((item) => {
+    if (!isDocumentActivityMatch(item, fileName)) return false
+    return (
+      isActivityWithinDedupeWindow(docRecord, item as Record<string, unknown>) &&
+      haveSameActivityAuthor(docRecord, item as Record<string, unknown>)
+    )
+  })
+}
+
+const isNoteCoveredByTimeline = (
+  note: LeadActivityNote,
+  timeline: LeadActivityTimelineItem[],
+) => {
+  const noteText = String(note.note ?? "").trim()
+  if (!noteText) return false
+
+  const noteRecord = note as Record<string, unknown>
+  return timeline.some((item) => {
+    const category = String(item.category_name ?? "").toLowerCase()
+    const text = String(item.text_info ?? "").trim()
+    const isNoteEntry = category === "note" || /^added a note/i.test(text)
+    if (!isNoteEntry) return false
+
+    const timelineNoteText = text.replace(/^added a note:?\s*/i, "").trim()
+    const textsMatch =
+      timelineNoteText === noteText ||
+      timelineNoteText.includes(noteText) ||
+      noteText.includes(timelineNoteText)
+    if (!textsMatch) return false
+
+    return (
+      isActivityWithinDedupeWindow(noteRecord, item as Record<string, unknown>) &&
+      haveSameActivityAuthor(noteRecord, item as Record<string, unknown>)
+    )
+  })
+}
+
+const isEmailCoveredByTimeline = (
+  email: LeadActivityEmail,
+  timeline: LeadActivityTimelineItem[],
+) => {
+  const subject = String(email.subject ?? "").trim()
+  if (!subject) return false
+
+  const emailRecord = email as Record<string, unknown>
+  return timeline.some((item) => {
+    const category = String(item.category_name ?? "").toLowerCase()
+    const text = String(item.text_info ?? "").trim()
+    const isEmailEntry = category === "email" || /^sent (an )?email/i.test(text)
+    if (!isEmailEntry) return false
+
+    const timelineSubject = text.replace(/^sent (an )?email:?\s*/i, "").trim()
+    const subjectsMatch =
+      timelineSubject === subject ||
+      timelineSubject.includes(subject) ||
+      subject.includes(timelineSubject)
+    if (!subjectsMatch) return false
+
+    return (
+      isActivityWithinDedupeWindow(emailRecord, item as Record<string, unknown>) &&
+      haveSameActivityAuthor(emailRecord, item as Record<string, unknown>)
+    )
+  })
+}
+
+const isDeleteTimelineEntry = (item: LeadActivityTimelineItem) => {
+  const category = String(item.category_name ?? item.action ?? "").toLowerCase()
+  const text = String(item.text_info ?? "")
+  return category === "delete" || /deleted/i.test(text)
+}
+
+const isDeleteActivityCoveredByTimeline = (
+  deleteEntry: LeadActivityTimelineItem,
+  timeline: LeadActivityTimelineItem[],
+) => {
+  const deleteRecord = deleteEntry as Record<string, unknown>
+  return timeline.some((item) => {
+    if (!isDeleteTimelineEntry(item)) return false
+    return isActivityWithinDedupeWindow(
+      deleteRecord,
+      item as Record<string, unknown>,
+    )
+  })
 }
 
 const LEAD_FIELD_DISPLAY_NAMES: Record<string, string> = {
@@ -1157,8 +1372,81 @@ const dedupeGenericFieldUpdateTimeline = (timeline: LeadActivityTimelineItem[]) 
   })
 }
 
+const dedupeDeleteTimeline = (timeline: LeadActivityTimelineItem[]) => {
+  const kept: LeadActivityTimelineItem[] = []
+
+  for (const item of timeline) {
+    if (!isDeleteTimelineEntry(item)) {
+      kept.push(item)
+      continue
+    }
+
+    const itemRecord = item as Record<string, unknown>
+    const isDuplicate = kept.some((existing) => {
+      if (!isDeleteTimelineEntry(existing)) return false
+      return isActivityWithinDedupeWindow(
+        itemRecord,
+        existing as Record<string, unknown>,
+      )
+    })
+
+    if (!isDuplicate) {
+      kept.push(item)
+    }
+  }
+
+  return kept
+}
+
+const dedupeDocumentTimeline = (timeline: LeadActivityTimelineItem[]) => {
+  const kept: LeadActivityTimelineItem[] = []
+
+  for (const item of timeline) {
+    const category = String(item.category_name ?? "").toLowerCase()
+    const text = String(item.text_info ?? "")
+    const isDocumentUpload =
+      category === "document" && /uploaded document/i.test(text)
+
+    if (!isDocumentUpload) {
+      kept.push(item)
+      continue
+    }
+
+    const fileName = extractUploadedDocumentName(text)
+    const itemRecord = item as Record<string, unknown>
+    const isDuplicate = kept.some((existing) => {
+      if (!isDocumentActivityMatch(existing, fileName)) return false
+      return (
+        isActivityWithinDedupeWindow(
+          itemRecord,
+          existing as Record<string, unknown>,
+        ) &&
+        haveSameActivityAuthor(
+          itemRecord,
+          existing as Record<string, unknown>,
+        )
+      )
+    })
+
+    if (!isDuplicate) {
+      kept.push(item)
+    }
+  }
+
+  return kept
+}
+
 const processTimelineForDisplay = (timeline: LeadActivityTimelineItem[]) =>
-  dedupeGenericFieldUpdateTimeline(enrichTimelineItems(timeline))
+  dedupeDeleteTimeline(
+    dedupeDocumentTimeline(
+      dedupeGenericFieldUpdateTimeline(enrichTimelineItems(timeline)),
+    ),
+  )
+
+interface PreservedActivityOptions {
+  documentUploads?: LeadActivityDocument[]
+  deleteTimeline?: LeadActivityTimelineItem[]
+}
 
 const getDropdownFieldDisplayValue = (
   field: string,
@@ -1441,6 +1729,7 @@ function LeadDetailFieldDropdown({
   align = "end",
   variant = "solid",
   triggerClassName,
+  readOnly = false,
 }: {
   currentValue?: string | null
   placeholder: string
@@ -1451,11 +1740,48 @@ function LeadDetailFieldDropdown({
   align?: "start" | "end" | "center"
   variant?: "solid" | "soft"
   triggerClassName?: string
+  readOnly?: boolean
 }) {
   const selectedOption = getLeadDetailDropdownOption(options, currentValue)
   const displayLabel = selectedOption?.label || fallbackLabel || placeholder
   const displayColor = selectedOption?.color || fallbackColor
   const hasValue = Boolean(selectedOption || fallbackLabel?.trim())
+
+  const badge = (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium",
+        hasValue
+          ? variant === "soft"
+            ? readOnly
+              ? ""
+              : "hover:opacity-90"
+            : readOnly
+              ? ""
+              : "text-white hover:opacity-90"
+          : "rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground",
+        triggerClassName,
+      )}
+      style={
+        hasValue
+          ? variant === "soft"
+            ? {
+                backgroundColor: `${displayColor}18`,
+                color: displayColor,
+                border: `1px solid ${displayColor}30`,
+              }
+            : { backgroundColor: displayColor }
+          : undefined
+      }
+    >
+      <span className="max-w-[160px] truncate">{displayLabel}</span>
+      {!readOnly ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : null}
+    </span>
+  )
+
+  if (readOnly) {
+    return badge
+  }
 
   return (
     <DropdownMenu>
@@ -1518,9 +1844,18 @@ function LeadDetailFieldDropdown({
   )
 }
 
-const buildUnifiedActivityList = (data: LeadActivityData): UnifiedActivityItem[] => {
+const buildUnifiedActivityList = (
+  data: LeadActivityData,
+  preserved: PreservedActivityOptions = {},
+): UnifiedActivityItem[] => {
   const items: UnifiedActivityItem[] = []
-  const processedTimeline = processTimelineForDisplay(data.timeline)
+  const preservedDeletes = (preserved.deleteTimeline ?? []).filter(
+    (entry) => !isDeleteActivityCoveredByTimeline(entry, data.timeline),
+  )
+  const processedTimeline = processTimelineForDisplay([
+    ...preservedDeletes,
+    ...data.timeline,
+  ])
 
   processedTimeline.forEach((item, index) => {
     items.push({
@@ -1535,6 +1870,8 @@ const buildUnifiedActivityList = (data: LeadActivityData): UnifiedActivityItem[]
   })
 
   data.notes.forEach((item, index) => {
+    if (isNoteCoveredByTimeline(item, processedTimeline)) return
+
     const noteText = String(item.note ?? "").trim()
     items.push({
       _id: `note-${String(item._id ?? index)}`,
@@ -1548,6 +1885,8 @@ const buildUnifiedActivityList = (data: LeadActivityData): UnifiedActivityItem[]
   })
 
   data.email.forEach((item, index) => {
+    if (isEmailCoveredByTimeline(item, processedTimeline)) return
+
     const subject = String(item.subject ?? "")
     items.push({
       _id: `email-${String(item._id ?? index)}`,
@@ -1560,7 +1899,21 @@ const buildUnifiedActivityList = (data: LeadActivityData): UnifiedActivityItem[]
     })
   })
 
-  data.document.forEach((item, index) => {
+  const seenDocumentIds = new Set<string>()
+  const documentSources = [
+    ...(preserved.documentUploads ?? []),
+    ...data.document,
+  ].filter((item) => {
+    const docId = getDocumentId(item)
+    if (!docId) return true
+    if (seenDocumentIds.has(docId)) return false
+    seenDocumentIds.add(docId)
+    return true
+  })
+
+  documentSources.forEach((item, index) => {
+    if (isDocumentCoveredByTimeline(item, processedTimeline)) return
+
     const fileName = String(item.user_file_name ?? "")
     items.push({
       _id: `document-${String(item._id ?? item.id ?? index)}`,
@@ -1607,9 +1960,9 @@ function DetailInfoRow({
   actions?: React.ReactNode
 }) {
   return (
-    <div className="flex items-start gap-3 border-b border-slate-100 py-3 last:border-b-0 last:pb-0 first:pt-0">
+    <div className={leadDetailContactRowClassName}>
       {Icon ? (
-        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-500">
+        <div className={leadDetailIconBoxClassName}>
           <Icon className="h-4 w-4" />
         </div>
       ) : null}
@@ -1623,9 +1976,6 @@ function DetailInfoRow({
     </div>
   )
 }
-
-const leadDetailCardClassName =
-  "rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)]"
 
 function ContactDetailRow({
   icon: Icon,
@@ -1643,8 +1993,8 @@ function ContactDetailRow({
   const displayValue = value?.trim() ? value : "—"
 
   return (
-    <div className="flex items-start gap-3 border-b border-slate-100 py-3 last:border-b-0 last:pb-0 first:pt-0">
-      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-500">
+    <div className={leadDetailContactRowClassName}>
+      <div className={leadDetailIconBoxClassName}>
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
@@ -1676,6 +2026,10 @@ type LeadDetailSnapshot = {
   contactsList: unknown[]
   customFields: unknown[]
   activityData: LeadActivityData
+  preservedDocumentUploads: LeadActivityDocument[]
+  preservedDeleteTimeline: LeadActivityTimelineItem[]
+  suggestedProjects?: MatchedProject[]
+  fetchedAt?: number
 }
 
 export default function LeadDetailPage() {
@@ -1687,11 +2041,11 @@ export default function LeadDetailPage() {
   // the full-screen "Loading lead details..." spinner every time.
   const detailCacheId = Array.isArray(params.id) ? params.id[0] : params.id
   const cachedDetail = detailCacheId
-    ? queryClient.getQueryData<LeadDetailSnapshot>([
-        "lead-detail-snapshot",
-        detailCacheId,
-      ])
+    ? queryClient.getQueryData<LeadDetailSnapshot>(
+        leadDetailSnapshotQueryKey(detailCacheId),
+      )
     : undefined
+  const activeLeadIdRef = useRef(detailCacheId)
   const [loading, setLoading] = useState(!cachedDetail)
   const [error, setError] = useState<string | null>(null)
   const [isEmailSheetOpen, setIsEmailSheetOpen] = useState(false)
@@ -1716,10 +2070,18 @@ export default function LeadDetailPage() {
   const [contactsList, setContactsList] = useState<any[]>((cachedDetail?.contactsList as any[]) ?? [])
   const [editContactDrawerOpen, setEditContactDrawerOpen] = useState(false)
   const [selectedContactForEdit, setSelectedContactForEdit] = useState<any>(null)
-  const [isConverting, setIsConverting] = useState(false);
   const [taskList, setTaskList] = useState<any[]>((cachedDetail?.taskList as any[]) ?? [])
   const { toast } = useToast()
-  const [convertOpportunityOpen, setConvertOpportunityOpen] = useState(false)
+  const {
+    userData,
+    isLoading: isPermissionsLoading,
+    canViewLeads,
+    canEditLead,
+    canViewLeadDocuments,
+    canAddLeadDocument,
+    canDeleteLeadDocument,
+    canDownloadLeadDocument,
+  } = useLeadPermissions()
   const [showNotQualifiedDialog, setShowNotQualifiedDialog] = useState(false)
   const [notQualifiedNotes, setNotQualifiedNotes] = useState("")
   const [selectedNotQualifiedReason, setSelectedNotQualifiedReason] = useState("")
@@ -1729,7 +2091,7 @@ export default function LeadDetailPage() {
   const [customFields, setCustomFields] = useState<any[]>((cachedDetail?.customFields as any[]) ?? [])
   const [activityDisplayLimit, setActivityDisplayLimit] = useState(5)
   const [showMoreDetails, setShowMoreDetails] = useState(true)
-  const contactInfoRef = useRef<HTMLDivElement>(null)
+  const contactInfoRef = useRef<HTMLElement>(null)
 
   // Function to handle field updates
   const { addTimelineActivity } = useTimeline()
@@ -1826,21 +2188,20 @@ export default function LeadDetailPage() {
     applications: [] as any[],
     notQualifiedReasons: [] as any[],
   })
-  const [profileData, setProfileData] = useState({
-    currency: ""
-  });
-  const [opportunityData, setOpportunityData] = useState({
-    opportunity_name: "",
-    target_date: format(new Date(), 'yyyy-MM-dd'),
-    amount: 0,
-    assigned_to: "",
-    application: ""
-  });
-  const [products, setProducts] = useState<Array<{subcategory_id: string, product_id: string, quantity: number}>>([])
   const [activityData, setActivityData] = useState<LeadActivityData>(cachedDetail?.activityData ?? EMPTY_ACTIVITY_DATA)
+  const [preservedDocumentUploads, setPreservedDocumentUploads] = useState<LeadActivityDocument[]>(
+    cachedDetail?.preservedDocumentUploads ?? [],
+  )
+  const [preservedDeleteTimeline, setPreservedDeleteTimeline] = useState<LeadActivityTimelineItem[]>(
+    cachedDetail?.preservedDeleteTimeline ?? [],
+  )
   const [activityLoading, setActivityLoading] = useState(false)
-  const [suggestedProjects, setSuggestedProjects] = useState<MatchedProject[]>([])
+  const [suggestedProjects, setSuggestedProjects] = useState<MatchedProject[]>(
+    cachedDetail?.suggestedProjects ?? [],
+  )
   const [isLoadingSuggestedProjects, setIsLoadingSuggestedProjects] = useState(false)
+  const loadGenerationRef = useRef(0)
+  const detailAbortRef = useRef<AbortController | null>(null)
 
   const [associatesData, setAssociatesData] = useState<Record<string, any>>((cachedDetail?.associatesData as Record<string, any>) ?? {
     contacts: [] as any[],
@@ -1856,44 +2217,8 @@ export default function LeadDetailPage() {
   const [editedCompanyName, setEditedCompanyName] = useState("")
   const companyEditRef = useRef(null)
   const companyNameRef = useRef(null)
-
-  // Add custom scrollbar styles
-  const scrollbarStyles = `
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background-color: #d1d5db;
-    border-radius: 4px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background-color: #9ca3af;
-  }
-  .scrollbar-hide {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
-  }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;  /* Chrome, Safari and Opera */
-  }
-  `
-  
-  // Add a mobile-specific style to ensure content is visible and scrollable
-  const mobileScrollFix = `
-  @media (max-width: 767px) {
-    body {
-      overflow-y: auto !important;
-    }
-    .mobile-scroll-fix {
-      height: auto !important;
-      overflow: visible !important;
-    }
-  }
-`
+  const recentlyDeletedDocumentIdsRef = useRef<Set<string>>(new Set())
+  const [documentToDelete, setDocumentToDelete] = useState<{ id: string; name: string } | null>(null)
 
   const currentUserId = useMemo(() => {
     if (typeof window === "undefined") return undefined
@@ -1958,6 +2283,12 @@ export default function LeadDetailPage() {
     setAiChatContext,
   ])
 
+  const [branchAssignableUsers, setBranchAssignableUsers] = useState<AssignableUser[]>([])
+  const userBranchMap = useMemo(
+    () => buildUserBranchMap(branchAssignableUsers),
+    [branchAssignableUsers],
+  )
+
   const assignableUsers = useMemo(
     () =>
       mergeTaskUserLists(
@@ -1968,12 +2299,19 @@ export default function LeadDetailPage() {
   )
 
   const assignedToOptions = useMemo(() => {
+    const branchScopedUsers = filterAssignableUsersForLead(
+      branchAssignableUsers,
+      leadData as Record<string, unknown>,
+      userBranchMap,
+      userData,
+    )
+
     const optionMap = new Map<string, LeadDetailDropdownOption>()
 
-    assignableUsers.forEach((user) => {
-      if (user._id && user.name) {
-        optionMap.set(user._id, {
-          value: user._id,
+    branchScopedUsers.forEach((user) => {
+      if (user.id && user.name) {
+        optionMap.set(user.id, {
+          value: user.id,
           label: user.name,
           color: ASSIGNED_TO_COLOR,
         })
@@ -1991,7 +2329,14 @@ export default function LeadDetailPage() {
     }
 
     return Array.from(optionMap.values())
-  }, [assignableUsers, leadData.assigned_to, leadData.assigned])
+  }, [
+    branchAssignableUsers,
+    leadData,
+    leadData.assigned_to,
+    leadData.assigned,
+    userBranchMap,
+    userData,
+  ])
 
   const leadStatusOptions = useMemo(
     () =>
@@ -2100,14 +2445,17 @@ export default function LeadDetailPage() {
   const companyDisplayName = leadData.company_name || leadData.project_name || ""
 
   const recentActivities = useMemo(() => {
-    const activities = buildUnifiedActivityList(activityData)
+    const activities = buildUnifiedActivityList(activityData, {
+      documentUploads: preservedDocumentUploads,
+      deleteTimeline: preservedDeleteTimeline,
+    })
 
     return activities.map((activity) => {
       const matchedUser = assignableUsers.find((user) => user._id === activity.createBy)
 
       return matchedUser?.name ? { ...activity, createBy: matchedUser.name } : activity
     })
-  }, [activityData, assignableUsers])
+  }, [activityData, assignableUsers, preservedDocumentUploads, preservedDeleteTimeline])
 
   const nextOpenTask = useMemo(
     () => taskList.find((task) => task.status !== "Completed"),
@@ -2119,196 +2467,230 @@ export default function LeadDetailPage() {
     [recentActivities, activityDisplayLimit],
   )
 
-  const veryLightGreyStyle = {
-    backgroundColor: "#ffffff", // Changed from #f9fafb to white
-  }
-
   useEffect(() => {
-    if (params.id) {
-      const id = Array.isArray(params.id) ? params.id[0] : params.id
-      const snapshot = queryClient.getQueryData<LeadDetailSnapshot>([
-        "lead-detail-snapshot",
-        id,
-      ])
+    if (!leadId) return
 
-      // If we have a cached snapshot for this lead, hydrate from it instantly
-      // and refresh in the background instead of showing the loading screen.
-      if (snapshot) {
-        setLeadData((prev) => ({ ...prev, ...(snapshot.leadData as Record<string, any>) }))
-        setAssociatesData((prev) => ({ ...prev, ...(snapshot.associatesData as Record<string, any>) }))
-        setTaskList(snapshot.taskList as any[])
-        setContactsList(snapshot.contactsList as any[])
-        setCustomFields(snapshot.customFields as any[])
-        setActivityData(snapshot.activityData)
-        setLoading(false)
-      } else {
-        setLoading(true)
+    activeLeadIdRef.current = leadId
+    const generation = ++loadGenerationRef.current
+    recentlyDeletedDocumentIdsRef.current.clear()
+
+    const snapshot = queryClient.getQueryData<LeadDetailSnapshot>(
+      leadDetailSnapshotQueryKey(leadId),
+    )
+
+    // Hydrate from cache instantly so the page paints without a spinner.
+    if (snapshot?.leadData && (snapshot.leadData as { _id?: string })._id) {
+      setLeadData((prev) => ({ ...prev, ...(snapshot.leadData as Record<string, any>) }))
+      setAssociatesData((prev) => ({
+        ...prev,
+        ...(snapshot.associatesData as Record<string, any>),
+      }))
+      setTaskList(snapshot.taskList as any[])
+      setContactsList(snapshot.contactsList as any[])
+      setCustomFields(snapshot.customFields as any[])
+      setActivityData(snapshot.activityData)
+      setPreservedDocumentUploads(snapshot.preservedDocumentUploads ?? [])
+      setPreservedDeleteTimeline(snapshot.preservedDeleteTimeline ?? [])
+      if (snapshot.suggestedProjects) {
+        setSuggestedProjects(snapshot.suggestedProjects)
       }
-
-      setError(null)
-      fetchLeadDetails()
-      fetchLeadSettings()
-      fetchAssignableUsers()
-      fetchProfileData()
+      setLoading(false)
+    } else {
+      setPreservedDocumentUploads([])
+      setPreservedDeleteTimeline([])
+      setLoading(true)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id])
+
+    setError(null)
+
+    const snapshotAge = snapshot?.fetchedAt ? Date.now() - snapshot.fetchedAt : Number.POSITIVE_INFINITY
+    const snapshotIsFresh =
+      Boolean(snapshot?.leadData && (snapshot.leadData as { _id?: string })._id) &&
+      snapshotAge < LEAD_DETAIL_STALE_MS
+
+    // Returning to a lead within the stale window: keep cached UI and only
+    // warm shared settings/users (usually already in react-query cache).
+    if (snapshotIsFresh) {
+      void loadSharedLeadCaches().catch((err) => {
+        console.error("Error warming shared lead caches:", err)
+      })
+      return
+    }
+
+    // Prefer React Query dedupe over abort-on-unmount. Strict Mode remounts
+    // join the same in-flight fetchQuery instead of starting a second set of
+    // lead_detail / activity / associates requests.
+    const abortController = new AbortController()
+    detailAbortRef.current = abortController
+
+    void (async () => {
+      const hasCachedLead = Boolean(
+        snapshot?.leadData && (snapshot.leadData as { _id?: string })._id,
+      )
+
+      try {
+        await loadLeadDetailBundle(leadId, {
+          generation,
+          signal: abortController.signal,
+          silent: hasCachedLead,
+        })
+      } catch (err) {
+        if (generation !== loadGenerationRef.current) return
+        if (err instanceof DOMException && err.name === "AbortError") return
+        if (!hasCachedLead) {
+          const message =
+            err instanceof Error ? err.message : "Failed to fetch lead details"
+          setError(message)
+          toast({
+            title: "Error",
+            description: message,
+            variant: "destructive",
+          })
+        }
+      } finally {
+        if (generation === loadGenerationRef.current) {
+          setLoading(false)
+          setIsLoadingSuggestedProjects(false)
+        }
+      }
+    })()
+
+    return () => {
+      const departingLeadId = leadId
+      // Defer cancel so Strict Mode remount (same leadId) can join in-flight
+      // queries. Cancel only when navigating to a different lead.
+      queueMicrotask(() => {
+        if (activeLeadIdRef.current === departingLeadId) return
+        abortController.abort()
+        void queryClient.cancelQueries({ queryKey: leadDetailQueryKey(departingLeadId) })
+        void queryClient.cancelQueries({ queryKey: leadActivityQueryKey(departingLeadId) })
+        void queryClient.cancelQueries({ queryKey: leadAssociatesQueryKey(departingLeadId) })
+        void queryClient.cancelQueries({
+          queryKey: leadMatchedProjectsQueryKey(departingLeadId),
+        })
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per lead id
+  }, [leadId])
 
   // Persist the loaded lead to the in-memory cache so navigating back to it
   // renders instantly without a loading screen.
   useEffect(() => {
     if (loading) return
-    const id = Array.isArray(params.id) ? params.id[0] : params.id
-    if (!id || !leadData._id) return
-    queryClient.setQueryData<LeadDetailSnapshot>(["lead-detail-snapshot", id], {
+    if (!leadId || !leadData._id) return
+    queryClient.setQueryData<LeadDetailSnapshot>(
+      leadDetailSnapshotQueryKey(leadId),
+      (prev) => ({
       leadData,
       associatesData,
       taskList,
       contactsList,
       customFields,
       activityData,
-    })
+      preservedDocumentUploads,
+      preservedDeleteTimeline,
+      suggestedProjects,
+      fetchedAt: prev?.fetchedAt ?? Date.now(),
+    }),
+    )
   }, [
     loading,
-    params.id,
+    leadId,
     leadData,
     associatesData,
     taskList,
     contactsList,
     customFields,
     activityData,
+    preservedDocumentUploads,
+    preservedDeleteTimeline,
+    suggestedProjects,
     queryClient,
   ])
 
-  useEffect(() => {
-    if (!leadData._id) return
+  const applyLeadSettingsData = (data: Awaited<ReturnType<typeof fetchLeadSettingsList>>) => {
+    const nqrArray =
+      data?.not_qualified_reasons ||
+      data?.not_qualified_reason ||
+      (Array.isArray(data?.settings)
+        ? data.settings.filter((s: { type?: string }) => s.type === "not_qualified_reason")
+        : [])
+    const mappedNqr = Array.isArray(nqrArray)
+      ? nqrArray.map((item: { _id?: string | { $oid?: string }; name?: string; color?: string }) => ({
+          id: resolveLeadSettingId(item),
+          name: item?.name,
+          color: item?.color || "#000000",
+        }))
+      : []
 
-    let cancelled = false
+    const leadStatuses = mapLeadSettingItems(
+      (data.lead_status || []) as Array<Record<string, unknown>>,
+    ).sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
 
-    const loadSuggestedProjects = async () => {
-      try {
-        const projectIds = await fetchLeadSuggestedProjects(leadData._id)
-        if (!cancelled) {
-          setLeadData((prev) => ({
-            ...prev,
-            suggested_projects: projectIds,
-          }))
-        }
-      } catch {
-        // Keep values from lead detail or local storage.
-      }
-    }
-
-    void loadSuggestedProjects()
-
-    return () => {
-      cancelled = true
-    }
-  }, [leadData._id])
-
-  useEffect(() => {
-    if (!leadData._id) return
-
-    let cancelled = false
-
-    const loadMatchedProjects = async () => {
-      setIsLoadingSuggestedProjects(true)
-      try {
-        const projects = await fetchLeadMatchedProjects(leadData._id, {
-          location: leadData.location,
-          budget: leadData.budget,
-          customerRequirementName: leadData.customer_requirement_name,
-        })
-        if (!cancelled) {
-          setSuggestedProjects(projects)
-        }
-      } catch {
-        if (!cancelled) {
-          setSuggestedProjects([])
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingSuggestedProjects(false)
-        }
-      }
-    }
-
-    void loadMatchedProjects()
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    leadData._id,
-    leadData.location,
-    leadData.budget,
-    leadData.customer_requirement_name,
-  ])
-
-  // Fetch lead settings (statuses, sources, customer types, etc.) from LEAD_SETTINGS_LIST
-  const fetchLeadSettings = async () => {
-    try {
-      const response = await fetch(URLS.LEAD_SETTINGS_LIST, {
-        method: "GET",
-        headers: getAuthHeaders(),
-      })
-
-      const result = await response.json()
-      if (result.code === 200 && result.data) {
-        const data = result.data
-
-        const nqrArray =
-          data?.not_qualified_reasons ||
-          data?.not_qualified_reason ||
-          (Array.isArray(data?.settings)
-            ? data.settings.filter((s: { type?: string }) => s.type === "not_qualified_reason")
-            : [])
-        const mappedNqr = Array.isArray(nqrArray)
-          ? nqrArray.map((item: { _id?: string | { $oid?: string }; name?: string; color?: string }) => ({
-              id: resolveLeadSettingId(item),
-              name: item?.name,
-              color: item?.color || "#000000",
-            }))
-          : []
-
-        const leadStatuses = mapLeadSettingItems(data.lead_status || []).sort(
-          (a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0),
-        )
-
-        setLeadSettings({
-          sources: mapLeadSettingItems(data.source || []),
-          paymentTerms: mapLeadSettingItems(data.payment_terms || data.payment_term || []),
-          customerTypes: mapLeadSettingItems(data.customer_type || []),
-          customerRequirements: mapLeadSettingItems(data.customer_requirement || []),
-          leadStatuses,
-          industries: mapLeadSettingItems(data.industry || []),
-          applications: mapLeadSettingItems(data.application || []),
-          notQualifiedReasons: mappedNqr,
-        })
-      }
-    } catch (err) {
-      console.error("Error fetching lead settings:", err)
-    }
+    setLeadSettings({
+      sources: mapLeadSettingItems(
+        ((data.source || data.lead_source || []) as Array<Record<string, unknown>>),
+      ),
+      paymentTerms: mapLeadSettingItems(
+        ((data.payment_terms || data.payment_term || []) as Array<Record<string, unknown>>),
+      ),
+      customerTypes: mapLeadSettingItems(
+        (data.customer_type || []) as Array<Record<string, unknown>>,
+      ),
+      customerRequirements: mapLeadSettingItems(
+        (data.customer_requirement || []) as Array<Record<string, unknown>>,
+      ),
+      leadStatuses,
+      industries: mapLeadSettingItems(
+        (data.industry || []) as Array<Record<string, unknown>>,
+      ),
+      applications: mapLeadSettingItems(
+        (data.application || []) as Array<Record<string, unknown>>,
+      ),
+      notQualifiedReasons: mappedNqr,
+    })
   }
 
-  const fetchAssignableUsers = async () => {
-    try {
-      const headers = getAuthHeaders()
-      const token = headers.Authorization.replace(/^Bearer\s+/i, "")
-      const users = await fetchActiveTaskUsers(token)
+  const loadSharedLeadCaches = async () => {
+    const headers = getAuthHeaders()
+    const token = headers.Authorization.replace(/^Bearer\s+/i, "")
+    const orgId = getOrgIdFromAuth(userData)
 
+    const [settingsResult, usersResult] = await Promise.allSettled([
+      queryClient.fetchQuery({
+        queryKey: LEAD_SETTINGS_QUERY_KEY,
+        queryFn: () => fetchLeadSettingsList(token),
+      }),
+      queryClient.fetchQuery({
+        queryKey: assignableUsersQueryKey(orgId),
+        queryFn: () => fetchCachedAssignableUsers(token, orgId, userData),
+      }),
+    ])
+
+    if (settingsResult.status === "fulfilled") {
+      applyLeadSettingsData(settingsResult.value)
+    } else {
+      console.error("Error fetching lead settings:", settingsResult.reason)
+    }
+
+    if (usersResult.status === "fulfilled") {
+      const users = usersResult.value
+      setBranchAssignableUsers(users)
       setAssociatesData((prev) => ({
         ...prev,
-        settingsListUsers: users,
+        settingsListUsers: users.map((user) => ({ _id: user.id, name: user.name })),
       }))
-    } catch (err) {
-      console.error("Error fetching users list:", err)
+    } else {
+      console.error("Error fetching users list:", usersResult.reason)
     }
   }
 
   const fetchLeadActivityData = async (options?: {
     showErrorToast?: boolean
     silent?: boolean
+    signal?: AbortSignal
+    /** Force a network refresh (e.g. after note/email mutations). */
+    force?: boolean
   }) => {
     if (!leadId) return
 
@@ -2317,77 +2699,71 @@ export default function LeadDetailPage() {
     }
 
     try {
-      const query = new URLSearchParams({
-        order: "desc",
-        sort: "create_date",
+      const activityResult = await queryClient.fetchQuery({
+        queryKey: leadActivityQueryKey(leadId),
+        staleTime: options?.force ? 0 : LEAD_DETAIL_STALE_MS,
+        queryFn: ({ signal }) =>
+          fetchLeadActivityRaw(leadId, mergeAbortSignals(signal, options?.signal)),
       })
 
-      const activityResponse = await fetch(
-        `${URLS.LEAD_ACTIVITY}/${leadId}?${query.toString()}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      )
-
-      if (!activityResponse.ok) {
-        throw new Error(`Activity request failed: ${activityResponse.status}`)
+      const nextData = normalizeActivityData(activityResult)
+      reconcileDeletedDocumentIds(nextData.document, recentlyDeletedDocumentIdsRef.current)
+      const processedTimeline = processTimelineForDisplay(nextData.timeline)
+      const processedData = {
+        ...nextData,
+        document: applyDeletedDocumentFilter(
+          nextData.document,
+          recentlyDeletedDocumentIdsRef.current,
+        ),
+        timeline: processedTimeline,
       }
 
-      const activityResult = await activityResponse.json()
-      if (activityResult.code === 200 && activityResult.data) {
-        const nextData = normalizeActivityData(activityResult.data)
-        const processedTimeline = processTimelineForDisplay(nextData.timeline)
-        const processedData = { ...nextData, timeline: processedTimeline }
+      if (options?.silent) {
+        setActivityData((prev) => {
+          const now = Date.now()
+          const pendingTimeline = prev.timeline.filter((item) =>
+            isOptimisticActivityId(item._id),
+          )
+          const pendingNotes = prev.notes.filter((item) =>
+            isOptimisticActivityId(item._id),
+          )
 
-        if (options?.silent) {
-          setActivityData((prev) => {
-            const now = Date.now()
-            const pendingTimeline = prev.timeline.filter((item) =>
-              isOptimisticActivityId(item._id),
-            )
-            const pendingNotes = prev.notes.filter((item) =>
-              isOptimisticActivityId(item._id),
-            )
+          const unresolvedTimeline = pendingTimeline.filter((item) => {
+            const itemRecord = item as Record<string, unknown>
+            const age = now - getOptimisticActivityTimestamp(itemRecord)
+            if (age > OPTIMISTIC_ACTIVITY_TTL_MS) return false
 
-            const unresolvedTimeline = pendingTimeline.filter((item) => {
-              const itemRecord = item as Record<string, unknown>
-              const age = now - getOptimisticActivityTimestamp(itemRecord)
-              if (age > OPTIMISTIC_ACTIVITY_TTL_MS) return false
-
-              const optimisticTime = getOptimisticActivityTimestamp(itemRecord)
-              const hasRecentServerMatch = processedData.timeline.some((serverItem) => {
-                const serverTime = new Date(
-                  getActivitySortTimestamp(serverItem as Record<string, unknown>),
-                ).getTime()
-                if (Number.isNaN(serverTime)) return false
-                return (
-                  Math.abs(serverTime - optimisticTime) < 30_000 &&
-                  serverItem.category_name === item.category_name
-                )
-              })
-              return !hasRecentServerMatch
+            const optimisticTime = getOptimisticActivityTimestamp(itemRecord)
+            const hasRecentServerMatch = processedData.timeline.some((serverItem) => {
+              const serverTime = new Date(
+                getActivitySortTimestamp(serverItem as Record<string, unknown>),
+              ).getTime()
+              if (Number.isNaN(serverTime)) return false
+              return (
+                Math.abs(serverTime - optimisticTime) < 30_000 &&
+                serverItem.category_name === item.category_name
+              )
             })
-            const unresolvedNotes = pendingNotes.filter(
-              (item) =>
-                !processedData.notes.some(
-                  (serverItem) => serverItem.note.trim() === item.note.trim(),
-                ),
-            )
-
-            return {
-              ...processedData,
-              timeline: [...unresolvedTimeline, ...processedData.timeline],
-              notes: [...unresolvedNotes, ...processedData.notes],
-            }
+            return !hasRecentServerMatch
           })
-        } else {
-          setActivityData(processedData)
-        }
+          const unresolvedNotes = pendingNotes.filter(
+            (item) =>
+              !processedData.notes.some(
+                (serverItem) => serverItem.note.trim() === item.note.trim(),
+              ),
+          )
+
+          return {
+            ...processedData,
+            timeline: [...unresolvedTimeline, ...processedData.timeline],
+            notes: [...unresolvedNotes, ...processedData.notes],
+          }
+        })
       } else {
-        throw new Error(activityResult.msg || "Failed to fetch activity data")
+        setActivityData(processedData)
       }
     } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return
       console.error("Error fetching activity data:", err)
       if (options?.showErrorToast !== false) {
         toast({
@@ -2466,7 +2842,7 @@ export default function LeadDetailPage() {
     void (async () => {
       try {
         await addTimelineActivity(timelineData)
-        await fetchLeadActivityData({ showErrorToast: false, silent: true })
+        await fetchLeadActivityData({ showErrorToast: false, silent: true, force: true })
       } catch (error) {
         console.error("Error recording timeline activity:", error)
       }
@@ -2493,69 +2869,206 @@ export default function LeadDetailPage() {
     })
   }
 
-  const fetchLeadDetailData = async () => {
-    const leadResponse = await fetch(`${URLS.LEAD_DETAIL}/${params.id}`, {
-      method: "GET",
-      headers: getAuthHeaders(),
+  const fetchLeadDetailData = async (options?: {
+    signal?: AbortSignal
+    force?: boolean
+  }) => {
+    const leadResult = await queryClient.fetchQuery({
+      queryKey: leadDetailQueryKey(String(leadId)),
+      staleTime: options?.force ? 0 : LEAD_DETAIL_STALE_MS,
+      queryFn: ({ signal }) =>
+        fetchLeadDetailRaw(String(leadId), mergeAbortSignals(signal, options?.signal)),
     })
 
-    if (!leadResponse.ok) {
-      throw new Error(`Lead detail request failed: ${leadResponse.status}`)
-    }
-
-    const leadResult = await leadResponse.json()
-    if (leadResult.code !== 200 || !leadResult.data) {
-      throw new Error(leadResult.msg || "Failed to fetch lead details")
-    }
-
-    const normalizedLead = normalizeLeadDetail(leadResult.data as LeadDetailApiRecord)
+    const normalizedLead = normalizeLeadDetail(leadResult as LeadDetailApiRecord)
     const apiSuggestedProjects = normalizedLead.suggested_projects
-    const storedSuggestedProjects = getStoredLeadSuggestedProjects(String(params.id ?? ""))
-    const suggestedProjects =
+    const storedSuggestedProjects = getStoredLeadSuggestedProjects(String(leadId ?? ""))
+    const nextSuggestedProjects =
       apiSuggestedProjects.length > 0 ? apiSuggestedProjects : storedSuggestedProjects
 
     setLeadData((prev) => ({
       ...prev,
       ...normalizedLead,
-      suggested_projects: suggestedProjects,
+      suggested_projects: nextSuggestedProjects,
+    }))
+
+    return {
+      ...normalizedLead,
+      suggested_projects: nextSuggestedProjects,
+    }
+  }
+
+  const fetchLeadAssociatesData = async (options?: {
+    signal?: AbortSignal
+    force?: boolean
+  }) => {
+    const associatesResult = await queryClient.fetchQuery({
+      queryKey: leadAssociatesQueryKey(String(leadId)),
+      staleTime: options?.force ? 0 : LEAD_DETAIL_STALE_MS,
+      queryFn: ({ signal }) =>
+        fetchLeadAssociatesRaw(String(leadId), mergeAbortSignals(signal, options?.signal)),
+    })
+
+    const customFieldsFromAssociates = Array.isArray(associatesResult?.custom_fields)
+      ? associatesResult.custom_fields
+      : []
+    setAssociatesData((prev) => ({
+      contacts: (associatesResult.contact as unknown[]) || [],
+      tasks: (associatesResult.task as unknown[]) || [],
+      users: (associatesResult.user as unknown[]) || [],
+      teams: (associatesResult.teams as unknown[]) || [],
+      custom_fields: customFieldsFromAssociates,
+      settingsListUsers: prev.settingsListUsers || [],
+    }))
+    setTaskList((associatesResult.task as any[]) || [])
+    setContactsList((associatesResult.contact as any[]) || [])
+    setCustomFields(customFieldsFromAssociates)
+  }
+
+  const fetchLeadCustomFieldsData = async (options?: { signal?: AbortSignal }) => {
+    // GET /customfield_values/:id is not implemented on the API. Values come
+    // from lead_associates.custom_fields instead (see fetchLeadAssociatesData).
+    if (options?.signal?.aborted) return
+  }
+
+  const fetchMatchedProjectsForLead = async (
+    id: string,
+    criteria: {
+      location?: string
+      budget?: string
+      customerRequirementName?: string
+    },
+  ) => {
+    setIsLoadingSuggestedProjects(true)
+    try {
+      const projects = await fetchLeadMatchedProjects(id, criteria, undefined, {
+        getProjects: async () => {
+          const cached = await queryClient.fetchQuery({
+            queryKey: PROJECT_LIST_QUERY_KEY,
+            queryFn: () => fetchProjectList({ length: 500 }),
+          })
+          return cached.projects
+        },
+      })
+      setSuggestedProjects(projects)
+      return projects
+    } catch {
+      setSuggestedProjects([])
+      return []
+    } finally {
+      setIsLoadingSuggestedProjects(false)
+    }
+  }
+
+  const loadLeadDetailBundle = async (
+    id: string,
+    options: { generation: number; signal: AbortSignal; silent?: boolean },
+  ) => {
+    const { generation, signal, silent } = options
+    if (!silent) {
+      setLoading(true)
+      setIsLoadingSuggestedProjects(true)
+    }
+
+    const getCachedProjects = async () => {
+      const cached = await queryClient.fetchQuery({
+        queryKey: PROJECT_LIST_QUERY_KEY,
+        queryFn: () => fetchProjectList({ length: 500 }),
+      })
+      return cached.projects
+    }
+
+    // Warm the project list in parallel with lead-scoped APIs, but score matches
+    // only once detail fields are available (avoids an empty-criteria match pass).
+    const projectsWarmPromise = getCachedProjects()
+
+    // Shared caches (deduped across list/detail/filter via react-query) +
+    // lead-scoped APIs all fire in parallel — no waterfalls.
+    // React Query also dedupes Strict Mode remounts onto the same in-flight keys.
+    const detailPromise = fetchLeadDetailData({ signal })
+    const sharedCachesPromise = loadSharedLeadCaches()
+    const secondaryPromise = Promise.allSettled([
+      fetchLeadActivityData({ showErrorToast: false, silent: Boolean(silent), signal }),
+      fetchLeadAssociatesData({ signal }),
+    ])
+
+    const [detailResult] = await Promise.allSettled([
+      detailPromise,
+      sharedCachesPromise,
+      secondaryPromise,
+      projectsWarmPromise,
+    ])
+
+    if (signal.aborted || generation !== loadGenerationRef.current) return
+
+    if (detailResult.status === "rejected") {
+      throw detailResult.reason
+    }
+
+    const normalized = detailResult.value
+
+    const criteria = {
+      location: normalized.location,
+      budget: normalized.budget,
+      customerRequirementName: normalized.customer_requirement_name,
+    }
+
+    let matched: MatchedProject[] = []
+    try {
+      matched = await queryClient.fetchQuery({
+        queryKey: leadMatchedProjectsQueryKey(id),
+        staleTime: LEAD_DETAIL_STALE_MS,
+        queryFn: async () => {
+          const projects = await getCachedProjects()
+          return matchProjectsForLead(projects, criteria)
+        },
+      })
+    } catch {
+      matched = await fetchMatchedProjectsForLead(id, criteria)
+    }
+
+    if (signal.aborted || generation !== loadGenerationRef.current) return
+
+    setSuggestedProjects(matched)
+    setIsLoadingSuggestedProjects(false)
+
+    queryClient.setQueryData<LeadDetailSnapshot>(leadDetailSnapshotQueryKey(id), (prev) => ({
+      leadData: {
+        ...(prev?.leadData ?? {}),
+        ...normalized,
+      },
+      associatesData: prev?.associatesData ?? associatesData,
+      taskList: prev?.taskList ?? taskList,
+      contactsList: prev?.contactsList ?? contactsList,
+      customFields: prev?.customFields ?? customFields,
+      activityData: prev?.activityData ?? activityData,
+      preservedDocumentUploads: prev?.preservedDocumentUploads ?? [],
+      preservedDeleteTimeline: prev?.preservedDeleteTimeline ?? [],
+      suggestedProjects: matched,
+      fetchedAt: Date.now(),
     }))
   }
 
-  const fetchLeadAssociatesData = async () => {
-    const associatesResponse = await fetch(`${URLS.LEAD_ASSOCIATES}/${params.id}`, {
-      method: "GET",
-      headers: getAuthHeaders(),
-    })
-    const associatesResult = await associatesResponse.json()
-    if (associatesResult.code === 200) {
-      setAssociatesData((prev) => ({
-        contacts: associatesResult.data.contact || [],
-        tasks: associatesResult.data.task || [],
-        users: associatesResult.data.user || [],
-        teams: associatesResult.data.teams || [],
-        custom_fields: [],
-        settingsListUsers: prev.settingsListUsers || [],
-      }))
-      setTaskList(associatesResult.data.task || [])
-      setContactsList(associatesResult.data.contact || [])
-    }
-  }
-
-  const fetchLeadCustomFieldsData = async () => {
-    const customFieldsResponse = await fetch(`${URLS.CUSTOMFIELD_VALUES}/${params.id}`, {
-      method: "GET",
-      headers: getAuthHeaders(),
-    })
-    const customFieldsResult = await customFieldsResponse.json()
-    if (customFieldsResult.code === 200) {
-      setCustomFields(customFieldsResult.data || [])
-    }
-  }
-
   const fetchLeadDetails = async () => {
+    if (!leadId) return
+    queryClient.removeQueries({ queryKey: leadMatchedProjectsQueryKey(leadId) })
+    queryClient.removeQueries({ queryKey: leadDetailQueryKey(leadId) })
+    queryClient.removeQueries({ queryKey: leadActivityQueryKey(leadId) })
+    queryClient.removeQueries({ queryKey: leadAssociatesQueryKey(leadId) })
+    const generation = ++loadGenerationRef.current
+    detailAbortRef.current?.abort()
+    const abortController = new AbortController()
+    detailAbortRef.current = abortController
+
     try {
-      await fetchLeadDetailData()
+      await loadLeadDetailBundle(leadId, {
+        generation,
+        signal: abortController.signal,
+        silent: false,
+      })
     } catch (err: unknown) {
+      if (abortController.signal.aborted) return
+      if (err instanceof DOMException && err.name === "AbortError") return
       const message = err instanceof Error ? err.message : "Failed to fetch lead details"
       setError(message)
       toast({
@@ -2563,107 +3076,11 @@ export default function LeadDetailPage() {
         description: message,
         variant: "destructive",
       })
-    }
-
-    await Promise.allSettled([
-      fetchLeadActivityData({ showErrorToast: false }),
-      fetchLeadAssociatesData(),
-      fetchLeadCustomFieldsData(),
-    ])
-
-    setLoading(false)
-  }
-
-  // Add function to fetch profile data
-  const fetchProfileData = async () => {
-    try {
-      const storedData = localStorage.getItem('map_user')
-      if (!storedData) {
-        throw new Error('User not authenticated')
-      }
-      const userData = JSON.parse(storedData)
-
-      const response = await fetch(URLS.PROFILE_DATAS, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${userData.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
-      const result = await response.json()
-      if (result.code === 200) {
-        setProfileData({
-          currency: result.data.currency
-        })
-      } else {
-        throw new Error(result.msg || 'Failed to fetch profile data')
-      }
-    } catch (err: any) {
-      setError(err.message)
-      toast({
-        title: "Error",
-        description: "Failed to fetch profile data",
-        variant: "destructive",
-      })
-    }
-  }
-
-  // Add handler for converting to opportunity
-  const handleConvertToOpportunity = async () => {
-    try {
-      setIsConverting(true); // Disable the button while converting
-      const storedData = localStorage.getItem('map_user')
-      if (!storedData) {
-        throw new Error('User not authenticated')
-      }
-      const userData = JSON.parse(storedData)
-
-      // Set opportunity name based on lead type
-      const defaultOpportunityName = leadData.lead_type === 'company' 
-        ? leadData.company_name 
-        : leadData.name;
-
-        const convertData = {
-          opportunity_name: opportunityData.opportunity_name || (leadData.lead_type === 'company' ? leadData.company_name : leadData.name),
-          target_date: opportunityData.target_date,
-          amount: opportunityData.amount,
-          currency_id: profileData.currency,
-          assigned_to: opportunityData.assigned_to || currentUserId,
-          application: opportunityData.application || leadData.lead_application_id || (leadSettings.applications.find(app => app.default === 1)?._id || ""),
-          products: products
-        }
-
-      const response = await fetch(`${URLS.CONVERT_2_OPPORTUNITY}/${leadData._id}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${userData.access_token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(convertData)
-      })
-
-      const result = await response.json()
-      if (result.code === 200) {
-        toast({
-          title: "Success",
-          description: "Lead converted to opportunity successfully",
-        })
-        // Optionally redirect to the new opportunity page
-        router.push(`/lead`)
-        // router.push(`/company/detail/${result.data}`)
-      } else {
-        throw new Error(result.msg || 'Failed to convert lead')
-      }
-    } catch (err: any) {
-      setError(err.message)
-      toast({
-        title: "Error",
-        description: "Failed to convert lead to opportunity",
-        variant: "destructive",
-      })
     } finally {
-      setIsConverting(false); // Re-enable the button
+      if (generation === loadGenerationRef.current) {
+        setLoading(false)
+        setIsLoadingSuggestedProjects(false)
+      }
     }
   }
 
@@ -2834,7 +3251,16 @@ export default function LeadDetailPage() {
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
-  
+
+    if (!canAddLeadDocument) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to upload documents.",
+        variant: "destructive",
+      })
+      return
+    }
+
     const files = Array.from(e.dataTransfer.files)
     if (files.length > 0) {
       await handleDocumentUpload(files[0])
@@ -2854,8 +3280,23 @@ export default function LeadDetailPage() {
 
   // Function to handle document uploads
   const handleDocumentDownload = async (documentUrl: string, fileName: string) => {
+    if (!canDownloadLeadDocument) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to download documents.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
-      const response = await fetch(getDocumentUrl(documentUrl))
+      const { Authorization } = getAuthHeaders()
+      const response = await fetch(getDocumentUrl(documentUrl), {
+        headers: { Authorization },
+      })
+      if (!response.ok) {
+        throw new Error("Failed to download file")
+      }
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -2876,10 +3317,27 @@ export default function LeadDetailPage() {
   }
   
   const handleDocumentOpenNewTab = (documentUrl: string) => {
+    if (!canDownloadLeadDocument) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to open documents.",
+        variant: "destructive",
+      })
+      return
+    }
     window.open(getDocumentUrl(documentUrl), '_blank')
   }
 
   const handleDocumentUpload = async (file: File) => {
+    if (!canAddLeadDocument) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to upload documents.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       const storedData = localStorage.getItem('map_user')
       if (!storedData) {
@@ -2911,8 +3369,6 @@ export default function LeadDetailPage() {
           associate_to: 'lead'
         })
 
-        void fetchLeadActivityData({ showErrorToast: false, silent: true })
-
         toast({
           title: "Success",
           description: "Document uploaded successfully",
@@ -2931,6 +3387,15 @@ export default function LeadDetailPage() {
   }
 
   const handleDocumentDelete = async (documentId: string) => {
+    if (!canDeleteLeadDocument) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to delete documents.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       const storedData = localStorage.getItem('map_user')
       if (!storedData) {
@@ -2947,16 +3412,60 @@ export default function LeadDetailPage() {
   
       const result = await response.json()
       if (result.code === 200) {
+        const deletedDoc = activityData.document.find(
+          (doc) => getDocumentId(doc) === documentId,
+        )
+        const fileName =
+          deletedDoc?.user_file_name || documentToDelete?.name || ""
+
+        if (deletedDoc) {
+          setPreservedDocumentUploads((prev) => {
+            if (prev.some((doc) => getDocumentId(doc) === documentId)) {
+              return prev
+            }
+            return [...prev, deletedDoc]
+          })
+        }
+
+        const deleteTimestamps = createOptimisticActivityFields()
+        const preservedDeleteEntry: LeadActivityTimelineItem = {
+          _id: `preserved-delete-${documentId}`,
+          category_name: "delete",
+          action: "delete",
+          text_info: fileName
+            ? `Deleted document: ${fileName}`
+            : "Deleted a document",
+          create_date: deleteTimestamps.create_date,
+          create_time: deleteTimestamps.create_time,
+          create_date_timestamp: deleteTimestamps.create_date_timestamp,
+          create_date_utc: deleteTimestamps.create_date_utc,
+          createBy: "",
+          create_by: currentUserId ?? "",
+        }
+
+        setPreservedDeleteTimeline((prev) => {
+          if (prev.some((item) => String(item._id) === preservedDeleteEntry._id)) {
+            return prev
+          }
+          return [preservedDeleteEntry, ...prev]
+        })
+
+        recentlyDeletedDocumentIdsRef.current.add(documentId)
+        setActivityData((prev) => ({
+          ...prev,
+          document: prev.document.filter((doc) => getDocumentId(doc) !== documentId),
+        }))
+
         // Add timeline activity for document deletion
         recordTimelineAndRefreshActivity({
           category_name: 'delete',
           action: 'delete',
-          text_info: 'Deleted a document',
+          text_info: fileName
+            ? `Deleted document: ${fileName}`
+            : 'Deleted a document',
           associate_id: leadData._id,
           associate_to: 'lead'
         })
-
-        void fetchLeadActivityData({ showErrorToast: false, silent: true })
 
         toast({
           title: "Success",
@@ -2973,6 +3482,13 @@ export default function LeadDetailPage() {
         variant: "destructive",
       })
     }
+  }
+
+  const handleConfirmDocumentDelete = () => {
+    if (!documentToDelete) return
+    const { id } = documentToDelete
+    setDocumentToDelete(null)
+    void handleDocumentDelete(id)
   }
 
   // Add function to handle editing a contact
@@ -3080,7 +3596,7 @@ export default function LeadDetailPage() {
   const handleEmailSent = async () => {
     try {
       // Refetch activity data to get the latest emails
-      await fetchLeadActivityData({ silent: true })
+      await fetchLeadActivityData({ silent: true, force: true })
       
       // Close the email sheet
       setIsEmailSheetOpen(false)
@@ -3123,22 +3639,11 @@ export default function LeadDetailPage() {
     setIsEmailPreviewOpen(true)
   }
   
-  useEffect(() => {
-    if (leadData) {
-      setOpportunityData(prev => ({
-        ...prev,
-        opportunity_name: leadData.lead_type === 'company' 
-          ? leadData.company_name 
-          : leadData.name
-      }));
-    }
-  }, [leadData]);
-
   const handleNewNote = (note?: { content?: string }, meta?: { isEdit?: boolean }) => {
     if (!meta?.isEdit && note?.content?.trim()) {
       prependOptimisticNote(note.content.trim())
     }
-    void fetchLeadActivityData({ showErrorToast: false, silent: true })
+    void fetchLeadActivityData({ showErrorToast: false, silent: true, force: true })
     setNoteDrawerOpen(false)
     setNoteToEdit(null)
   }
@@ -3243,7 +3748,7 @@ export default function LeadDetailPage() {
             : [],
         }))
 
-        void fetchLeadAssociatesData()
+        void fetchLeadAssociatesData({ force: true })
 
         toast({
           title: data.msg || (newDate ? "Followup Date Updated" : "Followup Date Removed"),
@@ -3321,6 +3826,11 @@ export default function LeadDetailPage() {
 
   // Add functions for handling custom field values
   const handleSingleValueSave = async (fieldId: string, value: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
+
     try {
       const storedData = localStorage.getItem('map_user')
       if (!storedData) {
@@ -3376,6 +3886,11 @@ export default function LeadDetailPage() {
   }
 
   const handleMultipleValueSave = async (fieldId: string, values: string[]) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
+
     try {
       const storedData = localStorage.getItem('map_user')
       if (!storedData) {
@@ -3431,7 +3946,19 @@ export default function LeadDetailPage() {
   }
 
 
+  const denyLeadEdit = () => {
+    toast({
+      title: "Permission denied",
+      description: "You don't have permission to edit leads.",
+      variant: "destructive",
+    })
+  }
+
   const handleFieldUpdate = async (field: string, value: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
     try {
       const storedData = localStorage.getItem('map_user')
       if (!storedData) {
@@ -3488,6 +4015,10 @@ export default function LeadDetailPage() {
   }
 
   const handleStageUpdate = async (newStageValue: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
     try {
       const storedData = localStorage.getItem("map_user")
       if (!storedData) {
@@ -3544,6 +4075,10 @@ export default function LeadDetailPage() {
   }
 
   const handlePurposeUpdate = async (newPurposeValue: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
     try {
       const storedData = localStorage.getItem("map_user")
       if (!storedData) {
@@ -3595,6 +4130,11 @@ export default function LeadDetailPage() {
   }
 
   const handleDropdownFieldUpdate = async (field: string, value: string) => {
+    if (!canEditLead) {
+      denyLeadEdit()
+      return
+    }
+
     // Check if this is a status change to Not Qualified
     if (field === 'lead_status' && notQualifiedStatus && value === notQualifiedStatus._id) {
       // Store the previous status to revert if user cancels
@@ -3812,7 +4352,7 @@ export default function LeadDetailPage() {
       case "archive":
         return <FileIcon className="h-4 w-4 text-amber-500" />
       default:
-        return <FileText className="h-4 w-4 text-gray-500" />
+        return <FileText className="h-4 w-4 text-muted-foreground" />
     }
   }
 
@@ -3965,7 +4505,7 @@ export default function LeadDetailPage() {
       case "Visit":
         return <MapPin className="h-4 w-4 text-orange-500" />
       default:
-        return <CheckSquare className="h-4 w-4 text-gray-500" />
+        return <CheckSquare className="h-4 w-4 text-muted-foreground" />
     }
   }
 
@@ -4007,26 +4547,38 @@ export default function LeadDetailPage() {
     setFieldEditValue("")
   }
 
-  // Remove number input spinners globally for .no-spinner class
-  if (typeof window !== 'undefined') {
-    const style = document.createElement('style');
-    style.innerHTML = `
-      input[type=number].no-spinner::-webkit-outer-spin-button,
-      input[type=number].no-spinner::-webkit-inner-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-      input[type=number].no-spinner {
-        -moz-appearance: textfield;
-        appearance: textfield;
-      }
-    `;
-    document.head.appendChild(style);
+  if (isPermissionsLoading) {
+    return (
+      <div className={cn("flex flex-col items-center justify-center min-h-screen gap-3", leadDetailPageBackgroundClassName)}>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className={leadDetailBodyMutedClassName}>Loading...</p>
+      </div>
+    )
+  }
+
+  if (!canViewLeads) {
+    return (
+      <div className={cn("flex flex-1 items-center justify-center p-4", leadDetailPageBackgroundClassName)}>
+        <Card className="w-full max-w-md border-none shadow-sm">
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <Shield className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">Access restricted</p>
+              <p className="text-sm text-muted-foreground">
+                You don&apos;t have permission to view leads. Ask an admin to enable the Lead permission for your role.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 gap-3">
+      <div className={cn("flex flex-col items-center justify-center min-h-screen gap-3", leadDetailPageBackgroundClassName)}>
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className={leadDetailBodyMutedClassName}>Loading lead details...</p>
       </div>
@@ -4035,7 +4587,7 @@ export default function LeadDetailPage() {
 
   if (error && !leadData._id) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 gap-4 px-4">
+      <div className={cn("flex flex-col items-center justify-center min-h-screen gap-4 px-4", leadDetailPageBackgroundClassName)}>
         <p className="text-sm text-destructive text-center">{error}</p>
         <Button
           variant="outline"
@@ -4052,14 +4604,13 @@ export default function LeadDetailPage() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#f1f5f9] mobile-scroll-fix">
-      <style>
-        {scrollbarStyles}
-        {mobileScrollFix}
-      </style>
-      <div className="flex flex-1 min-h-0 overflow-auto xl:overflow-hidden">
-        <div className="flex flex-col flex-1 min-w-0">
-          <div className="bg-white border-b border-slate-200/80 px-3 py-4 sm:px-4 lg:px-8 lg:py-5 w-full">
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+        leadDetailPageBackgroundClassName,
+      )}
+    >
+      <div className={cn(leadDetailHeaderClassName, "shrink-0 px-3 py-4 sm:px-4 lg:px-8 lg:py-5 w-full")}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4 w-full">
               <Avatar className="h-14 w-14 sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px] bg-primary/10 text-primary text-xl sm:text-2xl font-bold rounded-full shrink-0">
                 <div className="flex items-center justify-center h-full w-full">
@@ -4085,7 +4636,7 @@ export default function LeadDetailPage() {
                     <EditableTitle
                       value={leadData.name}
                       onSave={(value) => handleFieldUpdate("name", value)}
-                      canEdit={true}
+                      canEdit={canEditLead}
                       className={leadDetailPageTitleClassName}
                     />
                     <div className="flex items-center gap-1.5">
@@ -4096,7 +4647,7 @@ export default function LeadDetailPage() {
                           iconClassName: "text-green-500",
                           onClick: () =>
                             leadData.phone &&
-                            (window.location.href = `tel:${leadData.phone.replace(/\D/g, "")}`),
+                            (window.location.href = `tel:${String(leadData.phone).replace(/\D/g, "")}`),
                           disabled: !leadData.phone,
                         },
                         {
@@ -4106,7 +4657,7 @@ export default function LeadDetailPage() {
                           onClick: () => {
                             if (leadData.phone) {
                               window.open(
-                                `https://wa.me/${leadData.phone.replace(/\D/g, "")}`,
+                                `https://wa.me/${String(leadData.phone).replace(/\D/g, "")}`,
                                 "_blank",
                                 "noopener,noreferrer"
                               )
@@ -4133,7 +4684,7 @@ export default function LeadDetailPage() {
                           label: "Add Contact",
                           iconClassName: "text-indigo-500",
                           onClick: () => setContactSheetOpen(true),
-                          disabled: false,
+                          disabled: !canEditLead,
                         },
                       ].map((action) => (
                         <TooltipProvider key={action.label}>
@@ -4143,7 +4694,7 @@ export default function LeadDetailPage() {
                                 variant="outline"
                                 size="icon"
                                 disabled={action.disabled}
-                                className="h-8 w-8 rounded-full border-slate-200 bg-white hover:bg-slate-50"
+                                className={leadDetailActionButtonClassName}
                                 onClick={action.onClick}
                               >
                                 <action.icon className={cn("h-3.5 w-3.5", action.iconClassName)} />
@@ -4170,7 +4721,7 @@ export default function LeadDetailPage() {
                     {isCompanyEditOpen ? (
                       <div
                         ref={companyEditRef}
-                        className="absolute left-0 top-full z-20 mt-2 w-[min(100vw-2rem,16rem)] rounded-lg border border-slate-200 bg-white p-3 shadow-lg sm:w-64"
+                        className={cn(leadDetailPopoverClassName, "absolute left-0 top-full z-20 mt-2 w-[min(100vw-2rem,16rem)] sm:w-64")}
                       >
                         <Label htmlFor="company-name-edit" className={formModalLabelClassName}>
                           Company Name
@@ -4224,6 +4775,7 @@ export default function LeadDetailPage() {
                       fallbackColor={ASSIGNED_TO_COLOR}
                       align="end"
                       variant="solid"
+                      readOnly={!canEditLead}
                     />
                   </div>
                   <div className="flex items-center gap-2">
@@ -4237,6 +4789,7 @@ export default function LeadDetailPage() {
                       fallbackColor={leadData.lead_status_color || "#003399"}
                       align="end"
                       variant="soft"
+                      readOnly={!canEditLead}
                     />
                   </div>
                   <div className="flex items-center gap-2">
@@ -4253,23 +4806,30 @@ export default function LeadDetailPage() {
                       }
                       align="end"
                       variant="soft"
+                      readOnly={!canEditLead}
                     />
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+      </div>
 
-          <div className="flex flex-col xl:flex-row flex-1 min-h-0 xl:overflow-hidden gap-4 p-3 sm:gap-5 sm:p-4 lg:p-6 bg-[#f1f5f9]">
-            <div
-              ref={contactInfoRef}
-              className="w-full xl:w-[300px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar space-y-4"
-            >
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto xl:overflow-hidden">
+        <div
+          className={cn(
+            "flex flex-col gap-4 p-3 sm:gap-5 sm:p-4 lg:p-6 xl:min-h-0 xl:flex-1 xl:flex-row xl:overflow-hidden",
+            leadDetailContentAreaClassName,
+          )}
+        >
+          <aside
+            ref={contactInfoRef}
+            className="order-2 w-full space-y-4 xl:order-1 xl:w-[300px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar"
+          >
               <Card className={leadDetailCardClassName}>
                 <CardContent className="p-5">
                   <h3 className={cn(leadDetailSectionTitleClassName, "mb-1")}>Customer Info</h3>
                   <div>
-                    <EditableField variant="detail" icon={Building} field="current_staying" value={leadData.current_staying} label="Current Staying" onSave={handleFieldUpdate} canEdit={true} />
+                    <EditableField variant="detail" icon={Building} field="current_staying" value={leadData.current_staying} label="Current Staying" onSave={handleFieldUpdate} canEdit={canEditLead} />
                     <EditableField
                       variant="detail"
                       icon={Users}
@@ -4278,7 +4838,7 @@ export default function LeadDetailPage() {
                       label="Customer Type"
                       onSave={handleDropdownFieldUpdate}
                       options={leadSettings.customerTypes.map((t) => ({ label: t.name, value: t._id }))}
-                      canEdit={true}
+                      canEdit={canEditLead}
                     />
                     <EditableField
                       variant="detail"
@@ -4292,7 +4852,7 @@ export default function LeadDetailPage() {
                         label: item.name,
                         value: item._id,
                       }))}
-                      canEdit={true}
+                      canEdit={canEditLead}
                     />
                     <EditableField
                       variant="detail"
@@ -4302,9 +4862,9 @@ export default function LeadDetailPage() {
                       label="Description"
                       isTextarea={true}
                       onSave={handleFieldUpdate}
-                      canEdit={true}
+                      canEdit={canEditLead}
                     />
-                    <EditableField variant="detail" icon={MapPin} field="location" value={leadData.location} label="Preferred Location" onSave={handleFieldUpdate} canEdit={true} />
+                    <EditableField variant="detail" icon={MapPin} field="location" value={leadData.location} label="Preferred Location" onSave={handleFieldUpdate} canEdit={canEditLead} />
                     <EditableField
                       variant="detail"
                       icon={Phone}
@@ -4313,15 +4873,15 @@ export default function LeadDetailPage() {
                       label="Mobile Number"
                       type="phone"
                       onSave={handleFieldUpdate}
-                      canEdit={true}
+                      canEdit={canEditLead}
                       actions={
                         leadData.phone ? (
                           <div className="flex items-center gap-1.5">
-                            <a href={`tel:${leadData.phone.replace(/\D/g, "")}`} className="text-primary hover:text-primary/80">
+                            <a href={`tel:${String(leadData.phone).replace(/\D/g, "")}`} className="text-primary hover:text-primary/80">
                               <Phone className="h-3.5 w-3.5" />
                             </a>
                             <a
-                              href={`https://wa.me/${leadData.phone.replace(/\D/g, "")}`}
+                              href={`https://wa.me/${String(leadData.phone).replace(/\D/g, "")}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-emerald-600 hover:text-emerald-700"
@@ -4332,7 +4892,7 @@ export default function LeadDetailPage() {
                         ) : null
                       }
                     />
-                    <EditableField variant="detail" icon={Phone} field="alternate_phone" value={leadData.alternate_phone} label="Alt Mobile No" type="phone" onSave={handleFieldUpdate} canEdit={true} />
+                    <EditableField variant="detail" icon={Phone} field="alternate_phone" value={leadData.alternate_phone} label="Alt Mobile No" type="phone" onSave={handleFieldUpdate} canEdit={canEditLead} />
                     <EditableField
                       variant="detail"
                       icon={Tag}
@@ -4341,9 +4901,9 @@ export default function LeadDetailPage() {
                       label="Source"
                       onSave={handleDropdownFieldUpdate}
                       options={sourceOptions}
-                      canEdit={true}
+                      canEdit={canEditLead}
                     />
-                    <EditableField variant="detail" icon={Mail} field="email" value={leadData.email} label="Email" onSave={handleFieldUpdate} canEdit={true} />
+                    <EditableField variant="detail" icon={Mail} field="email" value={leadData.email} label="Email" onSave={handleFieldUpdate} canEdit={canEditLead} />
                   </div>
                 </CardContent>
               </Card>
@@ -4365,13 +4925,13 @@ export default function LeadDetailPage() {
                     />
                   </button>
                   {showMoreDetails ? (
-                    <div className="border-t border-slate-100 px-5 pb-5 pt-4">
+                    <div className="border-t border-border px-5 pb-5 pt-4">
                       <div>
                         <p className={cn("mb-1", leadDetailSubsectionLabelClassName)}>
                           More Info
                         </p>
-                        <EditableField variant="detail" icon={Tag} field="budget" value={leadData.budget} label="Budget" onSave={handleFieldUpdate} canEdit={true} />
-                        <EditableField variant="detail" icon={Clock} field="timeline" value={leadData.timeline} label="Timeline" onSave={handleFieldUpdate} canEdit={true} />
+                        <EditableField variant="detail" icon={Tag} field="budget" value={leadData.budget} label="Budget" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                        <EditableField variant="detail" icon={Clock} field="timeline" value={leadData.timeline} label="Timeline" onSave={handleFieldUpdate} canEdit={canEditLead} />
                         <EditableField
                           variant="detail"
                           icon={Briefcase}
@@ -4380,17 +4940,17 @@ export default function LeadDetailPage() {
                           label="Payment"
                           onSave={handleDropdownFieldUpdate}
                           options={paymentOptions}
-                          canEdit={true}
+                          canEdit={canEditLead}
                         />
-                        <EditableField variant="detail" icon={Calendar} field="dob" value={leadData.dob} label="DOB" type="dob" onSave={handleFieldUpdate} canEdit={true} />
-                        <EditableField variant="detail" icon={FileText} field="sod" value={leadData.sod} label="SOD" onSave={handleFieldUpdate} canEdit={true} />
+                        <EditableField variant="detail" icon={Calendar} field="dob" value={leadData.dob} label="DOB" type="dob" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                        <EditableField variant="detail" icon={FileText} field="sod" value={leadData.sod} label="SOD" onSave={handleFieldUpdate} canEdit={canEditLead} />
                       </div>
-                      <div className="mt-4 border-t border-slate-100 pt-4">
+                      <div className="mt-4 border-t border-border pt-4">
                         <p className={cn("mb-1", leadDetailSubsectionLabelClassName)}>
                           Qualify
                         </p>
-                        <EditableField variant="detail" icon={UserPlus} field="referred_by" value={leadData.referred_by} label="Referred By" onSave={handleFieldUpdate} canEdit={true} />
-                        <EditableField variant="detail" icon={Phone} field="referred_mobile_no" value={leadData.referred_mobile_no} label="Referred Mobile No" type="phone" onSave={handleFieldUpdate} canEdit={true} />
+                        <EditableField variant="detail" icon={UserPlus} field="referred_by" value={leadData.referred_by} label="Referred By" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                        <EditableField variant="detail" icon={Phone} field="referred_mobile_no" value={leadData.referred_mobile_no} label="Referred Mobile No" type="phone" onSave={handleFieldUpdate} canEdit={canEditLead} />
                         <EditableField
                           variant="detail"
                           icon={Target}
@@ -4410,7 +4970,7 @@ export default function LeadDetailPage() {
                                 }))
                               : undefined
                           }
-                          canEdit={true}
+                          canEdit={canEditLead}
                         />
                       </div>
                     </div>
@@ -4422,25 +4982,25 @@ export default function LeadDetailPage() {
                 <CardContent className="p-5">
                   <h3 className={cn(leadDetailSectionTitleClassName, "mb-1")}>Address</h3>
                   <div>
-                    <EditableField variant="detail" icon={MapPin} field="address1" value={leadData.address1} label="Address Line 1" onSave={handleFieldUpdate} canEdit={true} />
-                    <EditableField variant="detail" icon={MapPin} field="address2" value={leadData.address2} label="Address Line 2" onSave={handleFieldUpdate} canEdit={true} />
-                    <EditableField variant="detail" icon={Globe} field="country" value={leadData.country} label="Country" onSave={handleFieldUpdate} canEdit={true} />
-                    <EditableField variant="detail" icon={MapPin} field="state" value={leadData.state} label="State" onSave={handleFieldUpdate} canEdit={true} />
-                    <EditableField variant="detail" icon={Building} field="city" value={leadData.city} label="City" onSave={handleFieldUpdate} canEdit={true} />
-                    <EditableField variant="detail" icon={Hash} field="pincode" value={leadData.pincode} label="Pincode" type="pincode" onSave={handleFieldUpdate} canEdit={true} />
+                    <EditableField variant="detail" icon={MapPin} field="address1" value={leadData.address1} label="Address Line 1" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                    <EditableField variant="detail" icon={MapPin} field="address2" value={leadData.address2} label="Address Line 2" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                    <EditableField variant="detail" icon={Globe} field="country" value={leadData.country} label="Country" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                    <EditableField variant="detail" icon={MapPin} field="state" value={leadData.state} label="State" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                    <EditableField variant="detail" icon={Building} field="city" value={leadData.city} label="City" onSave={handleFieldUpdate} canEdit={canEditLead} />
+                    <EditableField variant="detail" icon={Hash} field="pincode" value={leadData.pincode} label="Pincode" type="pincode" onSave={handleFieldUpdate} canEdit={canEditLead} />
                   </div>
                 </CardContent>
               </Card>
 
 
-            </div>
+          </aside>
 
-            <div className="flex-1 min-w-0 xl:overflow-y-auto custom-scrollbar">
-              <Card className={cn(leadDetailCardClassName, "h-full overflow-hidden")}>
-              <Tabs defaultValue="overview" className="w-full">
-                <div className="border-b border-slate-100 bg-white px-2">
-                  <div className="px-4">
-                    <TabsList className="h-auto p-0 bg-transparent border-b-0 overflow-x-auto flex w-full min-w-0 gap-0.5 sm:gap-1">
+            <div className="order-1 min-w-0 w-full xl:order-2 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
+              <Card className={cn(leadDetailCardClassName, "flex min-h-[min(480px,calc(100vh-16rem))] flex-col overflow-hidden xl:min-h-0 xl:flex-1")}>
+              <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+                <div className={cn(leadDetailTabBarClassName, "shrink-0 px-2")}>
+                  <div className="overflow-x-auto px-4 [-webkit-overflow-scrolling:touch]">
+                    <TabsList className="flex h-auto w-max min-w-full justify-start gap-0.5 border-b-0 bg-transparent p-0 sm:gap-1">
                       <TabsTrigger
                         value="overview"
                         className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
@@ -4468,6 +5028,7 @@ export default function LeadDetailPage() {
                       <TabsTrigger
                         value="documents"
                         className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs font-medium text-slate-500 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4 sm:py-3.5 sm:text-sm"
+                        disabled={!canViewLeadDocuments}
                       >
                         Documents ({activityData.document.length})
                       </TabsTrigger>
@@ -4475,30 +5036,30 @@ export default function LeadDetailPage() {
                   </div>
                 </div>
 
-                <div className="p-3 sm:p-5 lg:p-6">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-3 sm:p-5 lg:p-6">
                   <TabsContent value="overview" className="m-0">
 
                                         {/* Not Qualified Details Section */}
                                         {isNotQualified && leadData.not_qualified_reason && (
-                      <div className="mb-6 bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-lg p-5">
+                      <div className="mb-6 rounded-lg border border-red-200 bg-gradient-to-r from-red-50 to-rose-50 p-5 dark:border-red-900/50 dark:from-red-950/40 dark:to-rose-950/40">
                         <div className="flex items-center gap-2 mb-4">
-                          <div className="h-8 w-8 rounded-full bg-red-100 flex items-center justify-center">
-                            <ThumbsDown className="h-4 w-4 text-red-600" />
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/60">
+                            <ThumbsDown className="h-4 w-4 text-red-600 dark:text-red-400" />
                           </div>
-                          <h3 className={cn(leadDetailSectionTitleClassName, "text-red-900")}>Lead Not Qualified Details</h3>
+                          <h3 className={cn(leadDetailSectionTitleClassName, "text-red-900 dark:text-red-300")}>Lead Not Qualified Details</h3>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {/* Left Column */}
                           <div className="space-y-4">
                             <div>
-                              <p className="text-xs font-medium text-red-700 mb-1">Not Qualified Reason</p>
+                              <p className="mb-1 text-xs font-medium text-red-700 dark:text-red-400">Not Qualified Reason</p>
                               <p className={leadDetailFieldValueClassName}>{leadData.not_qualified_reason}</p>
                             </div>
 
                             {leadData.not_qualified_note && (
                               <div>
-                                <p className="text-xs font-medium text-red-700 mb-1">Notes</p>
+                                <p className="mb-1 text-xs font-medium text-red-700 dark:text-red-400">Notes</p>
                                 <p className={cn(leadDetailBodyClassName, "whitespace-pre-wrap")}>{leadData.not_qualified_note}</p>
                               </div>
                             )}
@@ -4508,7 +5069,7 @@ export default function LeadDetailPage() {
                           <div className="space-y-4">
                             {leadData.not_qualified_date && (
                               <div>
-                                <p className="text-xs font-medium text-red-700 mb-1">Not Qualified Date</p>
+                                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Not Qualified Date</p>
                                 <p className={leadDetailFieldValueClassName}>
                                   {(() => {
                                     try {
@@ -4536,7 +5097,7 @@ export default function LeadDetailPage() {
                             )}
                             {leadData.not_qualified_time && (
                               <div>
-                                <p className="text-xs font-medium text-red-700 mb-1">Not Qualified Time</p>
+                                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Not Qualified Time</p>
                                 <p className={leadDetailFieldValueClassName}>{leadData.not_qualified_time}</p>
                               </div>
                             )}
@@ -4557,7 +5118,7 @@ export default function LeadDetailPage() {
                         <p className={cn(leadDetailBodyMutedClassName, "py-4")}>No activity recorded yet.</p>
                       ) : (
                         <>
-                          <div className="absolute left-3 top-8 bottom-0 w-0.5 bg-gray-200" />
+                          <div className={cn("absolute left-3 top-8 bottom-0 w-0.5", leadDetailTimelineLineClassName)} />
                           <div className="space-y-4">
                             {displayedActivities.map((activity, index) => (
                               <div key={activity._id ?? index} className="relative flex items-start">
@@ -4568,7 +5129,7 @@ export default function LeadDetailPage() {
                                 >
                                   {getActivityIcon(activity.category_name)}
                                 </div>
-                                <div className="rounded-xl border border-slate-100 bg-white p-4 flex-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                                <div className={leadDetailActivityCardClassName}>
                                   <p className={cn(leadDetailFieldValueClassName, "mb-1 capitalize")}>
                                     {String(activity.category_name || "activity").replace(/_/g, " ")}
                                   </p>
@@ -4595,7 +5156,7 @@ export default function LeadDetailPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="border-slate-200 text-slate-700"
+                                className="border-border text-foreground/90"
                                 onClick={() => setActivityDisplayLimit((prev) => prev + 5)}
                               >
                                 Load More Activities
@@ -4622,7 +5183,7 @@ export default function LeadDetailPage() {
                             <div className="flex items-start gap-3">
                               <div className="mt-1">
                                 <div
-                                  className={`h-5 w-5 rounded-full border flex items-center justify-center ${task.status === "Completed" ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-gray-400 cursor-pointer"}`}
+                                  className={`h-5 w-5 rounded-full border flex items-center justify-center ${task.status === "Completed" ? "bg-green-500 border-green-500" : "border-border hover:border-muted-foreground cursor-pointer"}`}
                                   onClick={() => task.status !== "Completed" && toggleTaskCompletion(task._id)}
                                 >
                                   {task.status === "Completed" && <Check className="h-3 w-3 text-white" />}
@@ -4797,8 +5358,15 @@ export default function LeadDetailPage() {
                   </TabsContent>
 
                   <TabsContent value="documents" className="m-0">
+                    {!canViewLeadDocuments ? (
+                      <p className={cn(leadDetailBodyMutedClassName, "py-4")}>
+                        You don&apos;t have permission to view documents.
+                      </p>
+                    ) : (
+                      <>
                     <div className="flex justify-between items-center mb-6">
                       <h2 className={leadDetailSectionTitleClassName}>Documents</h2>
+                      {canAddLeadDocument ? (
                       <Button
                         size="sm"
                         className="h-8 gap-2"
@@ -4817,13 +5385,15 @@ export default function LeadDetailPage() {
                         <Plus className="h-4 w-4" />
                         Upload Document
                       </Button>
+                      ) : null}
                     </div>
 
+                    {canAddLeadDocument ? (
                     <Card className="mb-6">
                       <CardContent className="p-6">
                       <div
                         className={`border-2 border-dashed rounded-lg p-4 ${
-                          isDragging ? 'border-primary bg-primary/10' : 'border-gray-300'
+                          isDragging ? 'border-primary bg-primary/10' : 'border-border'
                         }`}
                         onDragEnter={handleDragEnter}
                         onDragLeave={handleDragLeave}
@@ -4855,6 +5425,7 @@ export default function LeadDetailPage() {
                       </div>
                       </CardContent>
                     </Card>
+                    ) : null}
 
                     <h3 className={cn(leadDetailSectionTitleClassName, "mb-4")}>Shared Documents</h3>
                     <div className="space-y-3">
@@ -4895,22 +5466,47 @@ export default function LeadDetailPage() {
                                   </div>
                                 </div>
                                 <div className="flex gap-1 ml-2">
+                                  {canDeleteLeadDocument ? (
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8"
-                                    onClick={() => handleDocumentDelete(doc._id ?? doc.id ?? "")}
+                                    onClick={() =>
+                                      setDocumentToDelete({
+                                        id: getDocumentId(doc),
+                                        name: doc.user_file_name,
+                                      })
+                                    }
                                   >
-                                    <Trash2 className="h-3.5 w-3.5 text-gray-500" />
+                                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                  </Button>
+                                  ) : null}
+                                  {canDownloadLeadDocument ? (
+                                  <>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    disabled={!doc.document}
+                                    title="Download document"
+                                    onClick={() =>
+                                      void handleDocumentDownload(doc.document, doc.user_file_name)
+                                    }
+                                  >
+                                    <Download className="h-3.5 w-3.5 text-muted-foreground" />
                                   </Button>
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8"
+                                    disabled={!doc.document}
+                                    title="Open in new tab"
                                     onClick={() => handleDocumentOpenNewTab(doc.document)}
                                   >
-                                    <ExternalLink className="h-3.5 w-3.5 text-gray-500" />
+                                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
                                   </Button>
+                                  </>
+                                  ) : null}
                                 </div>
                               </div>
                             </CardContent>
@@ -4918,27 +5514,29 @@ export default function LeadDetailPage() {
                         ))
                       )}
                     </div>
+                      </>
+                    )}
                   </TabsContent>
                 </div>
               </Tabs>
               </Card>
             </div>
 
-            <div className="w-full xl:w-[280px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar space-y-4">
-
-
+            <aside className="order-3 w-full space-y-4 xl:w-[280px] xl:shrink-0 xl:overflow-y-auto custom-scrollbar">
               <SuggestedProjectsCard
                 leadId={leadId ?? ""}
                 selectedProjectIds={leadData.suggested_projects ?? []}
                 onSelectedProjectIdsChange={(projectIds) =>
                   setLeadData((prev) => ({ ...prev, suggested_projects: projectIds }))
                 }
+                canEdit={canEditLead}
               />
 
               <Card className={leadDetailCardClassName}>
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className={leadDetailSectionTitleClassName}>Additional Contacts</h3>
+                    {canEditLead ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -4948,6 +5546,7 @@ export default function LeadDetailPage() {
                       <Plus className="h-3.5 w-3.5 mr-1" />
                       Add
                     </Button>
+                    ) : null}
                   </div>
 
                   {contactsList.length === 0 ? (
@@ -4960,7 +5559,7 @@ export default function LeadDetailPage() {
                         return (
                           <div
                             key={contact._id || index}
-                            className={cn(index > 0 && "mt-4 border-t border-slate-100 pt-4")}
+                            className={cn(index > 0 && "mt-4 border-t border-border pt-4")}
                           >
                             <div className="group">
                               <ContactDetailRow
@@ -4968,6 +5567,7 @@ export default function LeadDetailPage() {
                                 label="Contact Name"
                                 value={contact.contact_name}
                                 trailing={
+                                  canEditLead ? (
                                   <div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                                     <Button
                                       variant="ghost"
@@ -4988,6 +5588,7 @@ export default function LeadDetailPage() {
                                       <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
                                   </div>
+                                  ) : undefined
                                 }
                               />
                             </div>
@@ -5094,24 +5695,24 @@ export default function LeadDetailPage() {
                   <h3 className={cn(leadDetailSectionTitleClassName, "mb-4")}>Matching Projects</h3>
                   <div className="space-y-2">
                     {isLoadingSuggestedProjects ? (
-                      <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-sm text-muted-foreground">
+                      <div className={cn(leadDetailDashedEmptyClassName, "flex items-center justify-center gap-2")}>
                         <Loader2 className="h-4 w-4 animate-spin" />
                         Loading projects...
                       </div>
                     ) : suggestedProjects.length === 0 ? (
-                      <p className={cn(leadDetailBodyMutedClassName, "rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center")}>
+                      <p className={cn(leadDetailBodyMutedClassName, leadDetailDashedEmptyClassName)}>
                         No matching projects found.
                       </p>
                     ) : (
                       suggestedProjects.map((project) => (
                         <div
                           key={project._id}
-                          className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2.5"
+                          className={leadDetailListItemClassName}
                         >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
+                          <div className={leadDetailIconBoxSmClassName}>
                             <Building className="h-4 w-4" />
                           </div>
-                          <span className="text-base font-semibold uppercase tracking-wide text-slate-900">
+                          <span className="text-base font-semibold uppercase tracking-wide text-foreground">
                             {project.name}
                           </span>
                         </div>
@@ -5121,153 +5722,9 @@ export default function LeadDetailPage() {
                 </CardContent>
               </Card>
 
-            </div>
+            </aside>
           </div>
-        </div>
       </div>
-
-      {/* Convert to Opportunity Sheet */}
-      <Sheet open={convertOpportunityOpen} onOpenChange={setConvertOpportunityOpen} side="right">
-        <SheetContent className={sheetFormContentClassName}>
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-            <SheetHeader className="pb-4">
-              <SheetTitle className="flex items-center gap-2">
-                <ThumbsUp className="h-5 w-5" />
-                Convert To Opportunity
-              </SheetTitle>
-              <Separator className="my-3" />
-            </SheetHeader>
-            <div className="grid gap-6">
-              <div className="grid gap-2">
-              <Label htmlFor="opportunity-name" className={formModalLabelClassName}>
-                Name <span className="text-red-500 ml-1">*</span>
-              </Label>
-              <Input 
-                value={opportunityData.opportunity_name} 
-                onChange={(e) => setOpportunityData(prev => ({
-                  ...prev,
-                  opportunity_name: e.target.value
-                }))}
-                className={formInputClassName}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="estimated-close" className={formModalLabelClassName}>Estimated Close</Label>
-              <Input 
-                type="date"
-                value={opportunityData.target_date}
-                onChange={(e) => setOpportunityData(prev => ({
-                  ...prev,
-                  target_date: e.target.value
-                }))}
-                className={formInputClassName}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="opportunity-value" className={formModalLabelClassName}>
-                Value <span className="text-red-500 ml-1">*</span>
-              </Label>
-              <Input 
-                type="number"
-                value={opportunityData.amount}
-                onChange={(e) => setOpportunityData(prev => ({
-                  ...prev,
-                  amount: parseFloat(e.target.value)
-                }))}
-                className={formInputClassName}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="assign-to" className={formModalLabelClassName}>Assign To</Label>
-              <LeadDetailFieldDropdown
-                currentValue={opportunityData.assigned_to || currentUserId}
-                placeholder="Select user"
-                options={assignedToOptions}
-                onChange={(value) =>
-                  setOpportunityData((prev) => ({
-                    ...prev,
-                    assigned_to: value,
-                  }))
-                }
-                fallbackColor={ASSIGNED_TO_COLOR}
-                align="start"
-              />
-            </div>
-
-            {/* Product Selection */}
-            <div className="space-y-2">
-              <DynamicProductSelector
-                products={products}
-                onProductsChange={setProducts}
-                disabled={isConverting}
-              />
-            </div>
-
-            {/* Application Selection */}
-            <div className="grid gap-2">
-              <Label htmlFor="application" className={formModalLabelClassName}>Application</Label>
-              <Select
-                value={opportunityData.application || leadData.lead_application_id || (leadSettings.applications.find(app => app.default === 1)?._id || "")}
-                onValueChange={(value) => setOpportunityData(prev => ({
-                  ...prev,
-                  application: value
-                }))}
-                disabled={isConverting}
-              >
-                <SelectTrigger size="form" className={formSelectTriggerClassName}>
-                  <SelectValue placeholder="Select application" />
-                </SelectTrigger>
-                <SelectContent>
-                  {leadSettings.applications.map((application) => (
-                    <SelectItem key={application._id} value={application._id}>
-                      {application.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="description" className={formModalLabelClassName}>Description</Label>
-              <Input id="description" placeholder="Add a brief description" className={formInputClassName} />
-            </div>
-
-            {/* Add extra padding at the bottom to ensure content isn't hidden behind any fixed elements */}
-            <div className="pb-16"></div>
-            </div>
-          </div>
-
-          {/* Fixed footer with buttons */}
-          <div className={formModalFooterClassName}>
-            <Button 
-              onClick={handleConvertToOpportunity}
-              disabled={isConverting}
-              className={formModalFooterButtonClassName}
-            >
-              {isConverting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Converting...
-                </>
-              ) : (
-                "Convert"
-              )}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className={formModalFooterButtonClassName}
-              onClick={() => setConvertOpportunityOpen(false)}
-              disabled={isConverting}
-            >
-              Cancel
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
 
       {/* Not Qualified Dialog */}
       <Dialog open={showNotQualifiedDialog} onOpenChange={(open) => {
@@ -5498,6 +5955,16 @@ export default function LeadDetailPage() {
         open={isEmailPreviewOpen}
         onOpenChange={setIsEmailPreviewOpen}
         email={selectedEmail}
+      />
+
+      <DeleteItemAlert
+        open={Boolean(documentToDelete)}
+        onOpenChange={(open) => {
+          if (!open) setDocumentToDelete(null)
+        }}
+        onDelete={handleConfirmDocumentDelete}
+        itemName={documentToDelete?.name ?? ""}
+        itemType="document"
       />
 
     </div>

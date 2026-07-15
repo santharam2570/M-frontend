@@ -14,6 +14,7 @@ export const URLS = {
   LOGIN_RESEND_OTP: `${BASE_URL}/login_resend_otp`,
   LOGIN: `${BASE_URL}/login`,
   FORGOT_PASSWORD: `${BASE_URL}/forgot_password_check`,
+  CHANGE_PASSWORD: `${BASE_URL}/change_Password`,
   CREATE_NEW_PASSWORD: `${BASE_URL}/creat_new_password`,
 
   ADD_LEAD: `${BASE_URL}/add_lead`,
@@ -49,6 +50,13 @@ export const URLS = {
   BOOKING_UPDATE: `${BASE_URL}/booking_edit`,
   BOOKING_DELETE: `${BASE_URL}/booking_delete`,
 
+  AGENT_LIST: `${BASE_URL}/agent_list`,
+  AGENT_DETAIL: `${BASE_URL}/agent_detail`,
+  AGENT_UPDATE: `${BASE_URL}/agent_edit`,
+  AGENT_DELETE: `${BASE_URL}/agent_delete`,
+  AGENT_METRICS: `${BASE_URL}/agent_metrics`,
+  AGENT_STATUS: `${BASE_URL}/agent_status`,
+
   ADD_PROJECT_SETTINGS: `${BASE_URL}/addprojectsettings`,
   PROJECT_SETTINGS_LIST: `${BASE_URL}/project_settings_list`,
   UPDATE_PROJECT_SETTINGS: `${BASE_URL}/updateprojectsettings`,
@@ -59,7 +67,6 @@ export const URLS = {
   LEAD_ACTIVITY: `${BASE_URL}/sales_lead_activity`,
   LEAD_ASSOCIATES: `${BASE_URL}/lead_associates`,
   COMPANY_ASSOCIATES: `${BASE_URL}/company_associates`,
-  OPPORTUNITY_ASSOCIATES: `${BASE_URL}/opportunity_associates`,
   PARTNER_ASSOCIATES: `${BASE_URL}/partner_associates`,
   TICKET_ASSOCIATES: `${BASE_URL}/ticket_associates`,
   INSTALLATION_ASSOCIATES: `${BASE_URL}/installation_associates`,
@@ -91,9 +98,12 @@ export const URLS = {
   ADD_USER: `${BASE_URL}/addUser`,
   USER_UPDATE: `${BASE_URL}/userUpdate`,
   USER_CHANGE_STATUS: `${BASE_URL}/userChangeStatus`,
+  USER_PERMISSIONS: `${BASE_URL}/users`,
+  USER_SELF_PERMISSIONS: `${BASE_URL}/user_permissions`,
   ROLES: `${BASE_URL}/roles`,
   ROLES_UPDATE: `${BASE_URL}/roles`,
   ADD_ROLES_LIST: `${BASE_URL}/roles`,
+  PERMISSIONS_CATALOG: `${BASE_URL}/permissions/catalog`,
   ACTIVE_USERS_LIST: `${BASE_URL}/active_users_list`,
 
   BRANCH_LIST: `${BASE_URL}/branch_list`,
@@ -104,6 +114,7 @@ export const URLS = {
   // Email compose & communication
   USERS_EMAIL: `${BASE_URL}/users_gmailList`,
   EMAIL_SIGNATURE: `${BASE_URL}/mail_signature_get`,
+  EMAIL_SIGNATURE_UPDATE: `${BASE_URL}/mail_Signature`,
   EMAIL_TEMPLATES: `${BASE_URL}/emailTemplate`,
   EMAIL_TEMPLATE_HISTORY: `${BASE_URL}/history`,
   EMAIL_DOCUMENTS: `${BASE_URL}/emailDocuments`,
@@ -116,7 +127,7 @@ export const URLS = {
 
   PROFILE_DATAS: `${BASE_URL}/profile_datas`,
   PROFILE_NEW: `${BASE_URL}/profile_datas`,
-  CONVERT_2_OPPORTUNITY: `${BASE_URL}/convert_2_opportunity`,
+  ORGANIZATION_PROFILE: `${BASE_URL}/organization_profile`,
 
   PRODUCT_SUBCATEGORY_SETTINGS_LIST: `${BASE_URL}/product_subcategory_settings_list`,
   PRODUCTS_BY_SUBCATEGORY: `${BASE_URL}/products_by_subcategory`,

@@ -32,7 +32,6 @@ import {
   getOrgIdFromAuth,
   getStoredAuthUser,
   createBranch,
-  fetchBranches,
   toggleBranchStatus,
   updateBranch,
 } from "@/lib/auth"
@@ -62,42 +61,21 @@ function slugifyCode(name: string): string {
 export function ManageBranches() {
   const router = useRouter()
   const { toast } = useToast()
-  const { orgId, roleTier, userData, isAuthLoading, canManageBranches } = useUserData()
-  const [branches, setBranches] = React.useState<Branch[]>([])
-  const [isLoading, setIsLoading] = React.useState(true)
+  const {
+    orgId,
+    roleTier,
+    userData,
+    isAuthLoading,
+    canManageBranches,
+    branches,
+    branchesLoading,
+    refreshBranches,
+  } = useUserData()
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingBranch, setEditingBranch] = React.useState<Branch | null>(null)
   const [name, setName] = React.useState("")
   const [code, setCode] = React.useState("")
   const [isSaving, setIsSaving] = React.useState(false)
-
-  const loadBranches = React.useCallback(async () => {
-    const resolvedOrgId = orgId || getOrgIdFromAuth(getStoredAuthUser())
-    if (!resolvedOrgId) return
-
-    setIsLoading(true)
-    try {
-      const list = await fetchBranches(resolvedOrgId)
-      setBranches(list)
-    } catch (error) {
-      console.error("Error loading branches:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load branches. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [orgId, toast])
-
-  React.useEffect(() => {
-    if (isAuthLoading || !userData) return
-
-    if (!canManageBranches) return
-
-    void loadBranches()
-  }, [isAuthLoading, userData, canManageBranches, loadBranches])
 
   const openCreate = () => {
     setEditingBranch(null)
@@ -144,7 +122,8 @@ export function ManageBranches() {
       }
 
       setDialogOpen(false)
-      await loadBranches()
+      // create/update invalidate memory cache + emit BRANCHES_UPDATED; refresh once via shared provider.
+      await refreshBranches()
     } catch (error) {
       console.error("Error saving branch:", error)
       toast({
@@ -164,7 +143,7 @@ export function ManageBranches() {
         title: "Branch updated",
         description: `${branch.name} is now ${updated.status}.`,
       })
-      await loadBranches()
+      await refreshBranches()
     } catch (error) {
       console.error("Error updating branch status:", error)
       toast({
@@ -238,7 +217,7 @@ export function ManageBranches() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading ? (
+              {branchesLoading ? (
                 Array.from({ length: 3 }).map((_, index) => (
                   <TableRow key={index}>
                     <TableCell colSpan={4}>
@@ -322,7 +301,7 @@ export function ManageBranches() {
                     setName(e.target.value)
                     if (!editingBranch) setCode(slugifyCode(e.target.value).toUpperCase())
                   }}
-                  placeholder="e.g. Branch A"
+                  placeholder="e.g. Branch Abcc"
                 />
               </div>
               <div className={formModalFieldGroupClassName}>

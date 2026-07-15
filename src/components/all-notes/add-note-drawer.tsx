@@ -35,7 +35,7 @@ interface AddNoteDrawerProps {
   onSave: (note: Note, meta?: { isEdit: boolean }) => void
   entityName?: string
   associateId: string
-  associateTo: string // "lead", "company", "opportunity", "partner", "onboarding", "new_request", "ticket"
+  associateTo: string // "lead", "company", "partner", "onboarding", "new_request", "ticket"
   editNote?: EditNoteData | null
 }
 

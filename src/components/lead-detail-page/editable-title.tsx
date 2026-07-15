@@ -18,7 +18,7 @@ interface EditableTitleProps {
 export function EditableTitle({
   value,
   onSave,
-  className = "text-2xl font-semibold text-gray-800",
+  className = "text-2xl font-semibold text-foreground",
   canEdit = true,
 }: EditableTitleProps) {
   const [isEditing, setIsEditing] = useState(false)
@@ -82,7 +82,7 @@ export function EditableTitle({
               variant="ghost"
               size="icon"
               className={cn(
-                "h-6 w-6 shrink-0 text-gray-400 hover:text-gray-700",
+                "h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground",
                 "opacity-100 sm:opacity-0",
                 isHovering && "sm:opacity-100",
               )}

@@ -233,8 +233,9 @@ export default function SendEmail({ initialContact = null, isOpen = false, onOpe
     setIsEmailPreviewOpen(true)
   }
 
-  // If component is used as a standalone page
-  if (!initialContact) {
+  // Controlled/embeddable usage (e.g. lead detail) must never mount the
+  // standalone min-h-screen layout — that sibling collapses flex parents.
+  if (!initialContact && onOpenChange == null) {
     return (
       <SidebarProvider>
         <div className="flex min-h-screen">
@@ -248,7 +249,6 @@ export default function SendEmail({ initialContact = null, isOpen = false, onOpe
     )
   }
 
-  // If component is used for sending email to a specific contact
   return (
     <EmailSheet
       open={isEmailSheetOpen}

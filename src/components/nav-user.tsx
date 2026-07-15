@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { useQueryClient } from "@tanstack/react-query"
 import { useReduxAuth } from "@/lib/hooks/useReduxAuth"
 import { clearPersistedQueryCache } from "@/lib/query-cache"
+import { invalidateCurrentUserEffectivePermissionsCache } from "@/lib/roles/roles-api"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
@@ -29,6 +30,8 @@ import {
 import { Button } from "@/components/ui/button"
 import URLS from "@/config/urls"
 import { useToast } from "@/hooks/use-toast"
+import { useRolePermissions } from "@/hooks/useRolePermissions"
+import { useUserData } from "@/hooks/useUserData"
 import { cn } from "@/lib/utils"
 import { GearIcon } from "@radix-ui/react-icons"
 import { SupportModal } from "@/components/modals/support-modal"
@@ -54,7 +57,18 @@ function getCachedUserDisplay(userData: Record<string, unknown> | null | undefin
 }
 
 function isNetworkError(error: unknown) {
-  return error instanceof TypeError && error.message === "Failed to fetch"
+  if (error instanceof TypeError && error.message === "Failed to fetch") {
+    return true
+  }
+
+  if (error instanceof DOMException && error.name === "TimeoutError") {
+    return true
+  }
+
+  return (
+    error instanceof Error &&
+    (error.name === "TimeoutError" || error.name === "AbortError")
+  )
 }
 
 export function NavUser() {
@@ -66,6 +80,9 @@ export function NavUser() {
   const queryClient = useQueryClient()
   const [user, setUser] = useState({ name: '', email: '', avatar: '' })
   const { user: reduxUser, token, logout: reduxLogout } = useReduxAuth()
+  const { userData, orgId } = useUserData()
+  const { hasPermission } = useRolePermissions(userData, orgId)
+  const canAccessSettings = hasPermission("settings")
   useEffect(() => {
     // Use Redux user data if available, fallback to localStorage
     const userData = reduxUser || (() => {
@@ -138,6 +155,7 @@ export function NavUser() {
       // Clear in-memory and persisted React Query cache
       queryClient.clear();
       clearPersistedQueryCache();
+      invalidateCurrentUserEffectivePermissionsCache();
 
       // SESSION CLEAR (localStorage fallback)
       localStorage.removeItem("map_user");
@@ -151,7 +169,6 @@ export function NavUser() {
       
       // SUMMARY FILTERS CLEAR
       localStorage.removeItem("current_lead_metrics_filters");
-      localStorage.removeItem("current_opportunity_metrics_filters");
       localStorage.removeItem("current_company_metrics_filters");
       localStorage.removeItem("current_contact_metrics_filters");
       localStorage.removeItem("current_product_metrics_filters");
@@ -238,10 +255,12 @@ export function NavUser() {
                 <User />
                 My Profile
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push("/settings/lead-settings")}>
-                <Settings />
-                Settings
-              </DropdownMenuItem>
+              {canAccessSettings ? (
+                <DropdownMenuItem onClick={() => router.push("/settings/lead-settings")}>
+                  <Settings />
+                  Settings
+                </DropdownMenuItem>
+              ) : null}
 
                   <DropdownMenuItem onClick={() => setShowSupportModal(true)}>
                     <HeadphonesIcon />

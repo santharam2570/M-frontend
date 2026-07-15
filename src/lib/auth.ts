@@ -3,6 +3,7 @@
 import URLS from "@/config/urls";
 import { parseJsonResponse } from "@/lib/api";
 import { clearPersistedQueryCache } from "@/lib/query-cache";
+import { resolveBranchObjectId } from "@/lib/branches/branch-id";
 
 export interface Organization {
   id?: string;
@@ -26,6 +27,8 @@ export interface Branch {
   code: string;
   status: "active" | "inactive";
   manager_user_id?: string;
+  /** Legacy numeric branch_id from the Branch collection (not the document _id). */
+  legacy_branch_id?: number;
 }
 
 export interface UserRoleMeta {
@@ -107,7 +110,7 @@ export class AuthApiError extends Error {
 
 const AUTH_STORAGE_KEY = "map_user";
 const PENDING_AUTH_KEY = "map_auth_pending";
-const BRANCHES_STORAGE_PREFIX = "map_branches_";
+const BRANCHES_STORAGE_PREFIX = "map_branches_v2_";
 const USER_META_STORAGE_PREFIX = "map_user_meta_";
 const ACTIVE_BRANCH_KEY = "map_active_branch";
 
@@ -180,17 +183,22 @@ export function getRoleTier(user: StoredAuthUser | LoginResponseData | null): Ro
   if (roleName.includes("super")) return "super_admin";
   if (roleName.includes("admin")) return "admin";
   if (roleName.includes("manager")) return "branch_manager";
-  return "super_admin";
+  return "branch_user";
 }
 
 export function getUserBranchId(user: StoredAuthUser | LoginResponseData | null): string | undefined {
+  const orgId = getOrgIdFromAuth(user);
   const fromUser = user?.result?.branch_id;
-  if (fromUser) return fromUser;
+  if (fromUser) {
+    return resolveBranchObjectId(fromUser, orgId) ?? String(fromUser);
+  }
 
   const userId = resolveAuthUserId(user ?? {});
-  const orgId = getOrgIdFromAuth(user);
   if (userId && orgId) {
-    return getUserRoleMeta(orgId, userId)?.branch_id;
+    const fromMeta = getUserRoleMeta(orgId, userId)?.branch_id;
+    if (fromMeta) {
+      return resolveBranchObjectId(fromMeta, orgId) ?? fromMeta;
+    }
   }
   return undefined;
 }
@@ -203,10 +211,22 @@ export function getAccessibleBranchIds(
   user: StoredAuthUser | LoginResponseData | null
 ): string[] | "all" {
   const tier = getRoleTier(user);
+  // Org-wide roles can select any branch even when a home branch_id is set.
   if (hasAllBranchAccess(tier)) return "all";
 
   const branchId = getUserBranchId(user);
   return branchId ? [branchId] : [];
+}
+
+export function filterBranchesForUser<T extends { id: string }>(
+  branches: T[],
+  user: StoredAuthUser | LoginResponseData | null,
+): T[] {
+  const access = getAccessibleBranchIds(user);
+  if (access === "all") return branches;
+
+  const scoped = branches.filter((branch) => access.includes(branch.id));
+  return scoped;
 }
 
 export function canAccessBranch(
@@ -260,15 +280,9 @@ export function getStoredBranches(orgId: number): Branch[] {
   if (typeof window === "undefined" || !orgId) return [];
   try {
     const raw = localStorage.getItem(branchesKey(orgId));
-    if (raw) return JSON.parse(raw) as Branch[];
-
-    const defaults: Branch[] = [
-      { id: "branch_a", org_id: orgId, name: "Branch A", code: "A", status: "active" },
-      { id: "branch_b", org_id: orgId, name: "Branch B", code: "B", status: "active" },
-      { id: "branch_c", org_id: orgId, name: "Branch C", code: "C", status: "active" },
-    ];
-    localStorage.setItem(branchesKey(orgId), JSON.stringify(defaults));
-    return defaults;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Branch[];
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -284,6 +298,11 @@ export function getBranchById(orgId: number, branchId: string): Branch | undefin
 }
 
 export const BRANCHES_UPDATED_EVENT = "map-branches-updated";
+
+let cachedBranchesPromise: Promise<Branch[]> | null = null;
+let cachedBranchesOrgId: string | null = null;
+let cachedBranchesTimestamp = 0;
+const BRANCHES_CACHE_TTL_MS = 60_000;
 
 type BranchRawRecord = Record<string, unknown>;
 
@@ -327,11 +346,23 @@ function normalizeBranchStatus(value: unknown): Branch["status"] {
 }
 
 function resolveBranchId(raw: BranchRawRecord): string {
-  const id = raw._id ?? raw.id ?? raw.branch_id;
+  const id = raw.id ?? raw._id;
   if (id && typeof id === "object" && "$oid" in (id as object)) {
     return String((id as { $oid?: string }).$oid ?? "");
   }
-  return String(id ?? "");
+  if (id != null && String(id).trim()) {
+    return String(id).trim();
+  }
+  return "";
+}
+
+function readLegacyBranchId(raw: BranchRawRecord): number | undefined {
+  const value = raw.branch_id;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return undefined;
 }
 
 function normalizeBranch(raw: BranchRawRecord, orgId: number): Branch | null {
@@ -343,6 +374,8 @@ function normalizeBranch(raw: BranchRawRecord, orgId: number): Branch | null {
     .trim()
     .toUpperCase();
 
+  const legacyBranchId = readLegacyBranchId(raw);
+
   return {
     id,
     org_id: Number(raw.org_id ?? orgId),
@@ -350,6 +383,7 @@ function normalizeBranch(raw: BranchRawRecord, orgId: number): Branch | null {
     code,
     status: normalizeBranchStatus(raw.status),
     manager_user_id: raw.manager_user_id ? String(raw.manager_user_id) : undefined,
+    ...(legacyBranchId != null ? { legacy_branch_id: legacyBranchId } : {}),
   };
 }
 
@@ -381,8 +415,16 @@ function notifyBranchesUpdated(): void {
   }
 }
 
+function invalidateBranchesMemoryCache(): void {
+  cachedBranchesPromise = null;
+  cachedBranchesOrgId = null;
+  cachedBranchesTimestamp = 0;
+}
+
 function syncBranchesCache(orgId: number, branches: Branch[], notify = false): Branch[] {
   saveBranches(orgId, branches);
+  // Mutations must not leave an in-memory promise serving pre-mutation data.
+  invalidateBranchesMemoryCache();
   if (notify) notifyBranchesUpdated();
   return branches;
 }
@@ -400,20 +442,27 @@ async function readBranchResponse<T>(response: Response): Promise<T> {
   return payload.data as T;
 }
 
-export async function fetchBranches(orgId: number, token?: string): Promise<Branch[]> {
+async function fetchBranchesUncached(
+  orgId: number,
+  token?: string,
+  options?: { all?: boolean }
+): Promise<Branch[]> {
   const resolvedToken = token ?? getBranchAuthToken();
   if (!resolvedToken) {
-    return orgId ? getStoredBranches(orgId) : [];
+    return [];
   }
 
   try {
-    const response = await fetch(URLS.BRANCH_LIST, {
+    const url = options?.all
+      ? `${URLS.BRANCH_LIST}?all=1`
+      : URLS.BRANCH_LIST;
+    const response = await fetch(url, {
       method: "GET",
       headers: branchAuthHeaders(resolvedToken),
     });
 
     if (!response.ok) {
-      return orgId ? getStoredBranches(orgId) : [];
+      return [];
     }
 
     const payload = await parseJsonResponse<{ code?: number; data?: unknown; msg?: string }>(
@@ -421,7 +470,7 @@ export async function fetchBranches(orgId: number, token?: string): Promise<Bran
     );
 
     if (payload.code !== undefined && payload.code !== 200) {
-      return orgId ? getStoredBranches(orgId) : [];
+      return [];
     }
 
     const rawList = Array.isArray(payload)
@@ -436,15 +485,56 @@ export async function fetchBranches(orgId: number, token?: string): Promise<Bran
       .filter((branch): branch is Branch => branch !== null);
 
     const cacheOrgId = resolvedOrgId || branches[0]?.org_id;
-    if (branches.length > 0 && cacheOrgId) {
+    if (cacheOrgId) {
       saveBranches(cacheOrgId, branches);
-      return branches;
     }
 
-    return cacheOrgId ? getStoredBranches(cacheOrgId) : branches;
+    return branches;
   } catch {
-    return orgId ? getStoredBranches(orgId) : [];
+    return [];
   }
+}
+
+export async function fetchBranches(
+  orgId: number,
+  token?: string,
+  options?: { force?: boolean; all?: boolean }
+): Promise<Branch[]> {
+  const baseOrgId = orgId || getOrgIdFromAuth(getStoredAuthUser());
+  const now = Date.now();
+  const scopedKey = String(baseOrgId);
+  const allKey = `${baseOrgId}:all`;
+  const cacheKey = options?.all ? allKey : scopedKey;
+
+  if (!options?.force && cachedBranchesPromise && now - cachedBranchesTimestamp < BRANCHES_CACHE_TTL_MS) {
+    // Exact cache hit.
+    if (cachedBranchesOrgId === cacheKey) {
+      return cachedBranchesPromise;
+    }
+    // A full (?all=1) catalog satisfies scoped requests.
+    if (!options?.all && cachedBranchesOrgId === allKey) {
+      return cachedBranchesPromise;
+    }
+  }
+
+  if (options?.force) {
+    cachedBranchesPromise = null;
+    cachedBranchesOrgId = null;
+    cachedBranchesTimestamp = 0;
+  }
+
+  cachedBranchesTimestamp = now;
+  cachedBranchesOrgId = cacheKey;
+  cachedBranchesPromise = fetchBranchesUncached(baseOrgId, token, {
+    all: options?.all,
+  }).catch((error) => {
+    cachedBranchesPromise = null;
+    cachedBranchesOrgId = null;
+    cachedBranchesTimestamp = 0;
+    throw error;
+  });
+
+  return cachedBranchesPromise;
 }
 
 export interface CreateBranchInput {
@@ -613,17 +703,146 @@ export function setActiveBranchFilter(branchId: string | null): void {
   }
 }
 
+const ROLE_DATA_RESERVED_FIELDS = new Set([
+  "_id",
+  "id",
+  "role_id",
+  "role_name",
+  "name",
+  "org_id",
+  "is_system",
+  "is_system_role",
+  "create_by",
+  "create_date",
+  "created_at",
+  "updated_at",
+  "permissions",
+]);
+
+function toRolePermissionBoolean(value: unknown): boolean | null {
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "boolean") return value;
+  if (value === "1" || value === "0") return value === "1";
+  return null;
+}
+
+export function resolveMongoId(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value).trim();
+  }
+  if (typeof value === "object") {
+    const record = value as { $oid?: unknown; _id?: unknown; id?: unknown };
+    if (record.$oid != null) return String(record.$oid).trim();
+    if (record._id != null) return resolveMongoId(record._id);
+    if (record.id != null) return String(record.id).trim();
+  }
+  return "";
+}
+
+export function resolveRoleIdFromAuth(
+  user: StoredAuthUser | LoginResponseData | null
+): string {
+  if (!user) return "";
+
+  const roleData = user.roleData;
+  if (roleData) {
+    const fromRoleData =
+      resolveMongoId(roleData.id) ||
+      resolveMongoId(roleData._id) ||
+      resolveMongoId(roleData.role_id);
+    if (fromRoleData) return fromRoleData;
+  }
+
+  const result = user.result;
+  if (result) {
+    const fromResult =
+      resolveMongoId(result.role) || resolveMongoId(result.role_id);
+    if (fromResult) return fromResult;
+  }
+
+  return "";
+}
+
 export function getPermissionsFromRoleData(
   roleData: RoleData | undefined
 ): Record<string, boolean> {
   if (!roleData) return {};
   const permissions: Record<string, boolean> = {};
-  Object.keys(roleData).forEach((key) => {
-    if (typeof roleData[key] === "number" && key !== "_id" && key !== "role_name") {
-      permissions[key] = roleData[key] === 1;
+  Object.entries(roleData).forEach(([key, value]) => {
+    if (ROLE_DATA_RESERVED_FIELDS.has(key)) return;
+
+    const parsed = toRolePermissionBoolean(value);
+    if (parsed !== null) {
+      permissions[key] = parsed;
     }
   });
+
+  const nested = roleData.permissions;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    Object.entries(nested as Record<string, unknown>).forEach(([key, value]) => {
+      const parsed = toRolePermissionBoolean(value);
+      if (parsed !== null) {
+        permissions[key] = parsed;
+      }
+    });
+  }
+
   return permissions;
+}
+
+export function getAuthRolePermissions(
+  user: StoredAuthUser | LoginResponseData | null
+): Record<string, boolean> | null {
+  if (!user?.roleData) return null;
+
+  // Always return the parsed map when roleData exists — including all-false
+  // maps from user overrides that intentionally revoke role defaults.
+  return getPermissionsFromRoleData(user.roleData);
+}
+
+export const AUTH_PERMISSIONS_UPDATED_EVENT = "map-auth-permissions-updated";
+
+function permissionMapsEqual(
+  left: Record<string, boolean>,
+  right: Record<string, boolean>
+): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (Boolean(left[key]) !== Boolean(right[key])) return false;
+  }
+  return true;
+}
+
+export function patchAuthUserRolePermissions(
+  permissions: Record<string, boolean>,
+  options?: { silent?: boolean }
+): StoredAuthUser | null {
+  const stored = getStoredAuthUser();
+  if (!stored) return null;
+
+  const currentPermissions = getPermissionsFromRoleData(stored.roleData);
+  if (permissionMapsEqual(currentPermissions, permissions)) {
+    return stored;
+  }
+
+  const nextRoleData: RoleData = {
+    ...(stored.roleData ?? {}),
+    ...Object.fromEntries(
+      Object.entries(permissions).map(([key, enabled]) => [key, enabled ? 1 : 0])
+    ),
+  };
+
+  const next: StoredAuthUser = {
+    ...stored,
+    roleData: nextRoleData,
+  };
+
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(next));
+  if (!options?.silent && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AUTH_PERMISSIONS_UPDATED_EVENT));
+  }
+  return next;
 }
 
 export function canPerformAction(
@@ -656,7 +875,8 @@ export function canViewUserInManagement(
 
   if (actorTier === "branch_manager") {
     const actorBranch = getUserBranchId(actor);
-    if (hasAllBranchAccess(target.role_tier ?? "branch_user")) return true;
+    // Branch managers must not browse org-wide Admin/Super Admin accounts.
+    if (hasAllBranchAccess(target.role_tier ?? "branch_user")) return false;
     if (!actorBranch) return false;
     return Boolean(targetBranchId && actorBranch === targetBranchId);
   }
@@ -677,9 +897,12 @@ export function canManageTargetUser(
   if (!actor) return false;
   const actorTier = getRoleTier(actor);
   const targetTier = target.role_tier ?? "branch_user";
+  const actorId = resolveAuthUserId(actor);
+
+  if (target.id === actorId) return true;
 
   if (actorTier === "branch_user") return false;
-  if (actorTier === "super_admin") return targetTier !== "super_admin" || target.id === resolveAuthUserId(actor);
+  if (actorTier === "super_admin") return targetTier !== "super_admin";
   if (TIER_RANK[actorTier] <= TIER_RANK[targetTier]) return false;
 
   if (actorTier === "branch_manager") {
@@ -688,6 +911,11 @@ export function canManageTargetUser(
   }
 
   return true;
+}
+
+/** Super Admin tier users keep backend role/tier values locked in user management. */
+export function isSuperAdminUser(user: { role_tier?: RoleTier }): boolean {
+  return user.role_tier === "super_admin";
 }
 
 export function canAssignRoleTier(actor: StoredAuthUser | null, tier: RoleTier): boolean {
@@ -711,6 +939,18 @@ export function getAssignableTiers(user: StoredAuthUser | null): RoleTier[] {
   return [];
 }
 
+/** Include the user's current tier when editing so unchanged tiers remain selectable */
+export function getEditableTiers(
+  actor: StoredAuthUser | null,
+  currentTier?: RoleTier
+): RoleTier[] {
+  const assignable = getAssignableTiers(actor);
+  if (currentTier && !assignable.includes(currentTier)) {
+    return [currentTier, ...assignable];
+  }
+  return assignable;
+}
+
 export function canCreateUsers(user: StoredAuthUser | null): boolean {
   return getAssignableTiers(user).length > 0;
 }
@@ -724,28 +964,79 @@ export function canManageBranches(user: StoredAuthUser | null): boolean {
   return perms.manage_branches === true || perms.manage_settings === true;
 }
 
+export function canManageRoles(user: StoredAuthUser | null): boolean {
+  if (!user) return false;
+  const tier = getRoleTier(user);
+  if (tier === "super_admin" || tier === "admin") return true;
+
+  const perms = getPermissionsFromRoleData(user.roleData);
+  return perms.manage_roles === true;
+}
+
+export function canManageUsers(user: StoredAuthUser | null): boolean {
+  if (!user) return false;
+  const tier = getRoleTier(user);
+  if (tier === "super_admin" || tier === "admin" || tier === "branch_manager") {
+    return true;
+  }
+
+  const perms = getPermissionsFromRoleData(user.roleData);
+  return perms.manage_users === true;
+}
+
+export function canAccessSettings(user: StoredAuthUser | null): boolean {
+  if (!user) return false;
+  const tier = getRoleTier(user);
+  if (tier === "super_admin") return true;
+
+  const perms = getPermissionsFromRoleData(user.roleData);
+  return (
+    perms.settings === true ||
+    perms.manage_settings === true ||
+    perms.manage_users === true ||
+    perms.manage_roles === true ||
+    perms.manage_branches === true ||
+    perms.manage_lead_settings === true
+  );
+}
+
 export function ensureDefaultUserMeta(user: StoredAuthUser): StoredAuthUser {
   const orgId = getOrgIdFromAuth(user);
   const userId = resolveAuthUserId(user);
   if (!orgId || !userId) return user;
 
   const existing = getUserRoleMeta(orgId, userId);
-  if (!existing) {
-    setUserRoleMeta(orgId, userId, { role_tier: "super_admin" });
-    return {
-      ...user,
-      result: { ...user.result, role_tier: "super_admin" },
-    };
+  const roleTier =
+    user.result?.role_tier ??
+    user.roleData?.role_tier ??
+    existing?.role_tier ??
+    getRoleTier(user);
+  const branchIdRaw = user.result?.branch_id ?? existing?.branch_id;
+  const branchId = branchIdRaw
+    ? resolveBranchObjectId(branchIdRaw, orgId) ?? String(branchIdRaw)
+    : undefined;
+
+  const meta: UserRoleMeta = {
+    role_tier: roleTier,
+    ...(branchId ? { branch_id: branchId } : {}),
+  };
+
+  if (
+    !existing ||
+    existing.role_tier !== meta.role_tier ||
+    existing.branch_id !== meta.branch_id
+  ) {
+    setUserRoleMeta(orgId, userId, meta);
   }
 
-  if (!user.result?.role_tier) {
-    return {
-      ...user,
-      result: { ...user.result, role_tier: existing.role_tier, branch_id: existing.branch_id },
-    };
-  }
-
-  return user;
+  return {
+    ...user,
+    result: {
+      ...user.result,
+      role_tier: roleTier,
+      ...(branchId ? { branch_id: branchId } : {}),
+    },
+  };
 }
 
 async function readAuthResponse<T>(response: Response): Promise<T> {
@@ -901,8 +1192,14 @@ export async function createNewPassword(
 }
 
 export function resolveAuthUserId(data: LoginResponseData): string {
-  const userId = data.result?.id;
-  return userId != null ? String(userId) : "";
+  const result = data.result;
+  if (!result) return "";
+
+  return (
+    resolveMongoId(result.id) ||
+    resolveMongoId(result._id) ||
+    resolveMongoId(result.user_id)
+  );
 }
 
 export function requiresTwoStepVerification(data: LoginResponseData): boolean {

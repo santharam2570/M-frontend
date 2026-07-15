@@ -20,6 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  leadDetailDashedEmptyClassName,
+  leadDetailStatCardClassName,
+  leadDetailTableRowClassName,
+  leadDetailTableWrapClassName,
+} from "@/lib/form-field-styles"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 
@@ -124,37 +130,37 @@ export function BookingDetailTable({
 
       {unitInfo ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+          <div className={leadDetailStatCardClassName}>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Plot Number
             </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">
+            <p className="mt-1 text-sm font-semibold text-foreground">
               {unitInfo.plotNumber || "—"}
             </p>
           </div>
-          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+          <div className={leadDetailStatCardClassName}>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Site Area
             </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">
+            <p className="mt-1 text-sm font-semibold text-foreground">
               {unitInfo.siteArea || "—"}
             </p>
           </div>
-          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+          <div className={leadDetailStatCardClassName}>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Registration Date
             </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">
+            <p className="mt-1 text-sm font-semibold text-foreground">
               {formatReceiptDate(unitInfo.registrationDate)}
             </p>
           </div>
         </div>
       ) : null}
 
-      <div className={isMobile ? "space-y-3" : "overflow-auto rounded-lg border border-slate-200/80 bg-white"}>
+      <div className={isMobile ? "space-y-3" : leadDetailTableWrapClassName}>
         {isMobile ? (
           receipts.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-muted-foreground">
+            <div className={cn(leadDetailDashedEmptyClassName, "px-4 py-12")}>
               No bookings found.
             </div>
           ) : (
@@ -164,7 +170,7 @@ export function BookingDetailTable({
                   <CardContent className="p-4">
                     <div className="mb-3 flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-semibold text-slate-900">{receipt.customer_name || "—"}</p>
+                        <p className="font-semibold text-foreground">{receipt.customer_name || "—"}</p>
                         <p className="text-sm text-muted-foreground">
                           Receipt {receipt.receipt_number || "—"}
                         </p>
@@ -209,7 +215,7 @@ export function BookingDetailTable({
                 </Card>
               ))}
               {summary && receipts.length > 0 ? (
-                <div className="rounded-lg border bg-slate-100 px-4 py-3 text-sm font-medium">
+                <div className="rounded-lg border border-border bg-muted px-4 py-3 text-sm font-medium">
                   <div className="flex items-center justify-between">
                     <span>
                       Total ({summary.total_count} receipt{summary.total_count !== 1 ? "s" : ""})
@@ -242,8 +248,8 @@ export function BookingDetailTable({
               </TableRow>
             ) : (
               receipts.map((receipt) => (
-                <TableRow key={receipt._id} className="group even:bg-slate-50/40 hover:bg-muted/50">
-                  <TableCell className="px-4 py-3 text-sm font-medium text-slate-900">
+                <TableRow key={receipt._id} className={cn("group", leadDetailTableRowClassName)}>
+                  <TableCell className="px-4 py-3 text-sm font-medium text-foreground">
                     {receipt.customer_name || "—"}
                   </TableCell>
                   <TableCell className="px-4 py-3 text-sm">{receipt.receipt_number || "—"}</TableCell>
@@ -290,7 +296,7 @@ export function BookingDetailTable({
           </TableBody>
           {summary && receipts.length > 0 ? (
             <TableFooter>
-              <TableRow className="bg-slate-100 font-medium hover:bg-slate-100">
+              <TableRow className="bg-muted font-medium hover:bg-muted">
                 <TableCell colSpan={3} className="px-4 py-3 text-sm">
                   Total ({summary.total_count} receipt{summary.total_count !== 1 ? "s" : ""})
                 </TableCell>

@@ -94,7 +94,7 @@ export function ProjectsSummary({
   const displayMetrics = buildMetrics(metrics ?? EMPTY_METRICS)
 
   return (
-    <section className="mb-0 mt-5">
+    <section className="mb-0 mt-5 shrink-0">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Building2 className="h-5 w-5 text-primary" />

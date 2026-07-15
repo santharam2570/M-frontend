@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, FilterIcon, GripVertical, Plus, Search, X } from "lucide-react"
+import { Check, FilterIcon, GripVertical, Plus, Search, Shield, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
   Tooltip,
@@ -20,22 +21,30 @@ import { ProjectFilterDrawer } from "@/components/project-list-page/project-filt
 import {
   fetchProjectList,
   fetchProjectMetrics,
+  fetchProjectSettingsListApi,
+  isActiveProjectStatus,
+  mapProjectSettingsToOptions,
   normalizeCardColor,
   reorderProjectsApi,
   reorderProjectsList,
   sortProjectsByOrder,
   updateProjectCardColorApi,
+  type ProjectSettingOption,
 } from "@/lib/projects/project-api"
+import { PROJECT_SETTINGS_QUERY_KEY } from "@/lib/projects/project-shared-queries"
 import { getApiErrorMessage } from "@/lib/api"
 import type { Project, ProjectFilterState } from "@/lib/projects/types"
+import { EMPTY_PROJECT_FILTERS } from "@/lib/projects/types"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useProjectPermissions } from "@/hooks/useProjectPermissions"
 
 function filterProjects(
   projects: Project[],
   search: string,
   filters: ProjectFilterState,
   metricFilter: string | null,
+  statusOptions: ProjectSettingOption[] = [],
 ): Project[] {
   let result = [...projects]
 
@@ -48,6 +57,10 @@ function filterProjects(
         project.location.toLowerCase().includes(query) ||
         project.project_no.toLowerCase().includes(query),
     )
+  }
+
+  if (filters.branch_id) {
+    result = result.filter((project) => project.branch_id === filters.branch_id)
   }
 
   if (filters.status) {
@@ -69,7 +82,7 @@ function filterProjects(
   }
 
   if (metricFilter === "active") {
-    result = result.filter((project) => project.status === "active")
+    result = result.filter((project) => isActiveProjectStatus(project.status, statusOptions))
   }
 
   if (metricFilter === "available-units") {
@@ -88,6 +101,12 @@ export function ProjectsContent() {
   const { toast } = useToast()
   const isMobile = useIsMobile()
   const queryClient = useQueryClient()
+  const {
+    canViewProjects,
+    canAddProject,
+    canEditProject,
+    isLoading: isPermissionsLoading,
+  } = useProjectPermissions()
   const [token, setToken] = useState<string | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [search, setSearch] = useState("")
@@ -97,12 +116,7 @@ export function ProjectsContent() {
   const [activeMetricFilter, setActiveMetricFilter] = useState<string | null>(null)
   const [isReorderMode, setIsReorderMode] = useState(false)
   const [reorderProjects, setReorderProjects] = useState<Project[]>([])
-  const [filters, setFilters] = useState<ProjectFilterState>({
-    status: "",
-    location: "",
-    property_type: "",
-    rera_status: "",
-  })
+  const [filters, setFilters] = useState<ProjectFilterState>(EMPTY_PROJECT_FILTERS)
 
   useEffect(() => {
     try {
@@ -137,6 +151,17 @@ export function ProjectsContent() {
     queryFn: () => fetchProjectMetrics(),
   })
 
+  const { data: projectSettings } = useQuery({
+    queryKey: PROJECT_SETTINGS_QUERY_KEY,
+    enabled: !!token,
+    queryFn: () => fetchProjectSettingsListApi(),
+  })
+
+  const statusOptions = useMemo(
+    () => mapProjectSettingsToOptions(projectSettings?.project_status),
+    [projectSettings],
+  )
+
   useEffect(() => {
     if (listResult) {
       setProjects(listResult.projects)
@@ -162,14 +187,9 @@ export function ProjectsContent() {
     void queryClient.invalidateQueries({ queryKey: ["project-metrics"] })
   }, [queryClient])
 
-  const locationOptions = useMemo(
-    () => [...new Set(projects.map((project) => project.area_locality))].sort(),
-    [projects],
-  )
-
   const filteredProjects = useMemo(
-    () => filterProjects(projects, searchQuery, filters, activeMetricFilter),
-    [projects, searchQuery, filters, activeMetricFilter],
+    () => filterProjects(projects, searchQuery, filters, activeMetricFilter, statusOptions),
+    [projects, searchQuery, filters, activeMetricFilter, statusOptions],
   )
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length
@@ -213,12 +233,7 @@ export function ProjectsContent() {
     try {
       const { projects: allProjects } = await fetchProjectList({
         search: "",
-        filters: {
-          status: "",
-          location: "",
-          property_type: "",
-          rera_status: "",
-        },
+        filters: EMPTY_PROJECT_FILTERS,
       })
       setReorderProjects(sortProjectsByOrder(allProjects))
       setIsReorderMode(true)
@@ -257,6 +272,38 @@ export function ProjectsContent() {
   }
 
   const displayedProjects = isReorderMode ? reorderProjects : filteredProjects
+
+  if (isPermissionsLoading) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <main className="flex min-h-0 flex-1 flex-col items-center justify-center p-4 pt-0 text-sm text-muted-foreground">
+          Loading projects...
+        </main>
+      </div>
+    )
+  }
+
+  if (!canViewProjects) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <main className="flex min-h-0 flex-1 flex-col p-4 pt-0">
+          <Card className="border-none shadow-sm">
+            <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                <Shield className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">Access restricted</p>
+                <p className="text-sm text-muted-foreground">
+                  You don&apos;t have permission to view projects. Ask an admin to enable the View Project permission for your role.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -342,15 +389,17 @@ export function ProjectsContent() {
           </div>
 
           <div className="flex shrink-0 flex-nowrap items-center justify-start gap-2 sm:justify-end">
-            <Button
-              variant={isReorderMode ? "default" : "outline"}
-              size="sm"
-              className="h-8 shrink-0 gap-1.5 px-3 text-xs"
-              onClick={handleToggleReorderMode}
-            >
-              <GripVertical className="h-3.5 w-3.5" />
-              {isReorderMode ? (isMobile ? "Done" : "Done Reordering") : (isMobile ? "Reorder" : "Reorder")}
-            </Button>
+            {canEditProject ? (
+              <Button
+                variant={isReorderMode ? "default" : "outline"}
+                size="sm"
+                className="h-8 shrink-0 gap-1.5 px-3 text-xs"
+                onClick={handleToggleReorderMode}
+              >
+                <GripVertical className="h-3.5 w-3.5" />
+                {isReorderMode ? (isMobile ? "Done" : "Done Reordering") : (isMobile ? "Reorder" : "Reorder")}
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               size="sm"
@@ -366,24 +415,27 @@ export function ProjectsContent() {
                 </span>
               ) : null}
             </Button>
-            <Button
-              size="sm"
-              className="h-8 shrink-0 gap-1.5 px-3 text-xs"
-              onClick={() => setFormOpen(true)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {isMobile ? "Add" : "Add Project"}
-            </Button>
+            {canAddProject ? (
+              <Button
+                size="sm"
+                className="h-8 shrink-0 gap-1.5 px-3 text-xs"
+                onClick={() => setFormOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {isMobile ? "Add" : "Add Project"}
+              </Button>
+            ) : null}
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4">
           <ProjectsCards
             projects={displayedProjects}
             isLoading={isLoading}
             isReorderMode={isReorderMode}
             onReorder={handleReorder}
             onColorChange={handleColorChange}
+            statusOptions={statusOptions}
           />
         </div>
       </main>
@@ -399,7 +451,6 @@ export function ProjectsContent() {
         onOpenChange={setFilterOpen}
         filters={filters}
         onFiltersChange={setFilters}
-        locationOptions={locationOptions}
       />
     </div>
   )

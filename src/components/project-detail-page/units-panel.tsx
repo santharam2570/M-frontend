@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,7 @@ import {
   updateProjectUnit,
   type ProjectSettingOption,
 } from "@/lib/projects/project-api"
+import { UNIT_STATUS_OPTIONS_QUERY_KEY } from "@/lib/projects/project-shared-queries"
 import {
   canPerformUnitAction,
   DEFAULT_UNIT_PERMISSIONS,
@@ -28,6 +29,8 @@ import {
   type UnitPermissions,
 } from "@/lib/projects/unit-permissions"
 import type { ProjectUnit, PropertyType } from "@/lib/projects/types"
+import { leadDetailDashedEmptyClassName, leadDetailTableHeaderRowClassName, leadDetailTableWrapClassName } from "@/lib/form-field-styles"
+import { cn } from "@/lib/utils"
 import { UnitFormDialog } from "./units/unit-form-dialog"
 import { UnitTableRow } from "./units/unit-table-row"
 import {
@@ -47,6 +50,8 @@ interface UnitsPanelProps {
   projectId: string
   units?: ProjectUnit[] | null
   statusFilter?: UnitStatusFilter | null
+  /** When provided by the parent (shared settings query), skip a second fetch. */
+  statusOptions?: ProjectSettingOption[]
   onRefresh?: () => void
   permissions?: UnitPermissions
 }
@@ -64,6 +69,7 @@ export function UnitsPanel({
   projectId,
   units,
   statusFilter = null,
+  statusOptions: statusOptionsProp,
   onRefresh,
   permissions = DEFAULT_UNIT_PERMISSIONS,
 }: UnitsPanelProps) {
@@ -78,13 +84,26 @@ export function UnitsPanel({
   const [pricePerSqft, setPricePerSqft] = useState("")
   const [total, setTotal] = useState("")
   const [status, setStatus] = useState("")
-  const [statusOptions, setStatusOptions] = useState<ProjectSettingOption[]>([])
-  const [isLoadingStatusOptions, setIsLoadingStatusOptions] = useState(false)
   const [formErrors, setFormErrors] = useState<AddUnitFormErrors>({})
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null)
   const [draft, setDraft] = useState<UnitDraft | null>(null)
   const [draftErrors, setDraftErrors] = useState<UnitDraftErrors>({})
   const [isSavingRow, setIsSavingRow] = useState(false)
+
+  const hasParentStatusOptions = statusOptionsProp !== undefined
+
+  const {
+    data: queriedStatusOptions = [],
+    isLoading: isLoadingStatusOptions,
+  } = useQuery({
+    queryKey: UNIT_STATUS_OPTIONS_QUERY_KEY,
+    queryFn: () => fetchUnitStatusOptionsApi(),
+    enabled: !hasParentStatusOptions,
+  })
+
+  const statusOptions = hasParentStatusOptions
+    ? statusOptionsProp
+    : queriedStatusOptions
 
   const safeUnits = useMemo(() => coerceProjectUnits(units), [units])
 
@@ -118,35 +137,6 @@ export function UnitsPanel({
 
   const usesCents = CENTS_PROPERTY_TYPES.has(propertyType)
   const canCreateUnits = canPerformUnitAction(permissions, "create")
-
-  const loadStatusOptions = useCallback(async () => {
-    setIsLoadingStatusOptions(true)
-
-    try {
-      const options = await fetchUnitStatusOptionsApi()
-      setStatusOptions(options)
-      return options
-    } catch (error) {
-      setStatusOptions([])
-      toast({
-        title: "Error",
-        description: getApiErrorMessage(error, "Failed to load unit status options."),
-        variant: "destructive",
-      })
-      return []
-    } finally {
-      setIsLoadingStatusOptions(false)
-    }
-  }, [toast])
-
-  useEffect(() => {
-    void loadStatusOptions()
-  }, [loadStatusOptions])
-
-  useEffect(() => {
-    if (!dialogOpen || statusOptions.length === 0) return
-    setStatus(getDefaultOptionValue(statusOptions))
-  }, [dialogOpen, statusOptions])
 
   const resetForm = () => {
     setUnitNo("")
@@ -184,10 +174,10 @@ export function UnitsPanel({
     return errors
   }
 
-  const invalidateBookingQueries = useCallback(() => {
+  const invalidateBookingQueries = () => {
     void queryClient.invalidateQueries({ queryKey: ["booking-units"] })
     void queryClient.invalidateQueries({ queryKey: ["booking-metrics"] })
-  }, [queryClient])
+  }
 
   const handleAddUnit = async () => {
     const errors = validateAddForm()
@@ -304,7 +294,14 @@ export function UnitsPanel({
             : null}
         </p>
         {canCreateUnits ? (
-          <Button size="sm" className="w-full sm:w-auto" onClick={() => setDialogOpen(true)}>
+          <Button
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={() => {
+              setStatus(getDefaultOptionValue(statusOptions))
+              setDialogOpen(true)
+            }}
+          >
             <Plus className="mr-1.5 h-4 w-4" />
             Add Unit
           </Button>
@@ -312,19 +309,19 @@ export function UnitsPanel({
       </div>
 
       {safeUnits.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+        <div className={leadDetailDashedEmptyClassName}>
           No units added yet.
           {canCreateUnits ? " Click Add Unit to create the first one." : null}
         </div>
       ) : filteredUnits.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+        <div className={leadDetailDashedEmptyClassName}>
           No units with {statusFilterLabel} status.
         </div>
       ) : (
-        <div className="responsive-table-wrap overflow-hidden rounded-lg border border-slate-200/80">
+        <div className={cn(leadDetailTableWrapClassName, "responsive-table-wrap overflow-hidden")}>
           <Table className="min-w-[640px]">
             <TableHeader>
-              <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+              <TableRow className={leadDetailTableHeaderRowClassName}>
                 {UNIT_FIELD_DEFINITIONS.map((field) => (
                   <TableHead key={field.key}>{field.label}</TableHead>
                 ))}
@@ -368,7 +365,7 @@ export function UnitsPanel({
         total={total}
         status={status}
         statusOptions={statusOptions}
-        isLoadingStatusOptions={isLoadingStatusOptions}
+        isLoadingStatusOptions={!hasParentStatusOptions && isLoadingStatusOptions}
         isSubmitting={isSubmitting}
         formErrors={formErrors}
         onUnitNoChange={setUnitNo}

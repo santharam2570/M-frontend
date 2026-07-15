@@ -34,6 +34,8 @@ import {
   formInputClassName,
   formSelectTriggerClassName,
   formTextareaClassName,
+  leadDetailCardClassName,
+  leadDetailDashedEmptyClassName,
 } from "@/lib/form-field-styles"
 
 interface SiteVisitsPanelProps {
@@ -246,10 +248,10 @@ function formatVisitDate(value: string): string {
 
 function VisitStatusBadge({ status }: { status: SiteVisit["status"] }) {
   const config: Record<SiteVisit["status"], { label: string; className: string }> = {
-    scheduled: { label: "Scheduled", className: "bg-blue-50 text-blue-700 border-blue-200" },
-    completed: { label: "Completed", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-    cancelled: { label: "Cancelled", className: "bg-slate-100 text-slate-600 border-slate-200" },
-    no_show: { label: "No Show", className: "bg-red-50 text-red-700 border-red-200" },
+    scheduled: { label: "Scheduled", className: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800" },
+    completed: { label: "Completed", className: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800" },
+    cancelled: { label: "Cancelled", className: "bg-muted text-muted-foreground border-border" },
+    no_show: { label: "No Show", className: "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800" },
   }
 
   const item = config[status] ?? config.scheduled
@@ -417,18 +419,18 @@ export function SiteVisitsPanel({ projectId, siteVisits, onRefresh }: SiteVisits
       </div>
 
       {siteVisits.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+        <div className={leadDetailDashedEmptyClassName}>
           No site visits recorded for this project yet.
         </div>
       ) : (
         <div className="space-y-3">
           {siteVisits.map((visit) => (
-            <Card key={visit._id} className="border-slate-200/80 shadow-none">
+            <Card key={visit._id} className={cn(leadDetailCardClassName, "shadow-none")}>
               <CardContent className="p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold text-slate-900">{visit.lead_name}</p>
+                      <p className="font-semibold text-foreground">{visit.lead_name}</p>
                       <VisitStatusBadge status={visit.status} />
                     </div>
                     <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">

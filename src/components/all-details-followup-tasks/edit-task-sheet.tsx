@@ -298,8 +298,6 @@ export function EditTaskSheet({
         return URLS.LEAD_ASSOCIATES
       case "company":
         return URLS.COMPANY_ASSOCIATES
-      case "opportunity":
-        return URLS.OPPORTUNITY_ASSOCIATES
       case "partner":
       case "partner_request":
         return URLS.PARTNER_ASSOCIATES

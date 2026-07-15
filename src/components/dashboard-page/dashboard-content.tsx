@@ -1,132 +1,228 @@
 "use client"
 
+import { useMemo } from "react"
+import { useQuery } from "@tanstack/react-query"
 import {
   BarChart3,
   Bookmark,
   IndianRupee,
+  LayoutDashboard,
+  MapPin,
   PhoneCall,
   UserPlus,
-  Users,
 } from "lucide-react"
 
 import { AnimatedBarChart } from "@/components/dashboard-page/animated-bar-chart"
 import { AnimatedDonutChart } from "@/components/dashboard-page/animated-donut-chart"
 import { DashboardPageLayout } from "@/components/layout/dashboard-page-layout"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useUserData } from "@/hooks/useUserData"
+import { resolveAuthUserId } from "@/lib/auth"
+import { buildDashboardScope } from "@/lib/dashboard/get-dashboard-scope"
+import { fetchReportsRawData, getReportsData } from "@/lib/reports/reports-api"
+import type { ReportsLead, ReportsSummary } from "@/lib/reports/types"
 import { cn } from "@/lib/utils"
 
-const dashboardMetrics = [
-  {
-    id: "new-leads",
-    label: "New Leads",
-    value: 120,
-    icon: UserPlus,
-    iconClassName: "text-blue-600 bg-blue-50",
-    accentClassName: "hover:border-blue-200",
-  },
-  {
-    id: "calls-made",
-    label: "Calls Made",
-    value: 85,
-    icon: PhoneCall,
-    iconClassName: "text-violet-600 bg-violet-50",
-    accentClassName: "hover:border-violet-200",
-  },
-  {
-    id: "site-visits",
-    label: "Site Visits",
-    value: 22,
-    icon: Users,
-    iconClassName: "text-amber-600 bg-amber-50",
-    accentClassName: "hover:border-amber-200",
-  },
-  {
-    id: "bookings",
-    label: "Bookings",
-    value: 6,
-    icon: Bookmark,
-    iconClassName: "text-emerald-600 bg-emerald-50",
-    accentClassName: "hover:border-emerald-200",
-  },
-  {
-    id: "revenue",
-    label: "Revenue",
-    value: "₹36.50 L",
-    icon: IndianRupee,
-    iconClassName: "text-primary bg-primary/10",
-    accentClassName: "hover:border-primary/20",
-  },
-]
+function formatIndianCurrency(amount: number): string {
+  if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(2)} Cr`
+  if (amount >= 100000) return `₹${(amount / 100000).toFixed(2)} L`
+  return `₹${amount.toLocaleString("en-IN")}`
+}
 
-const leadsBySource = [
-  { label: "Facebook", value: 48, color: "#e53935" },
-  { label: "WhatsApp", value: 24, color: "#22c55e" },
-  { label: "Referral", value: 24, color: "#eab308" },
-  { label: "Website", value: 12, color: "#3b82f6" },
-  { label: "Others", value: 12, color: "#f97316" },
-]
+function countCallsMade(leads: ReportsLead[], followupsThisWeek?: number): number {
+  if (typeof followupsThisWeek === "number") {
+    return followupsThisWeek
+  }
 
-const pipelineOverview = [
-  { label: "New Lead", value: 120 },
-  { label: "Contacted", value: 96 },
-  { label: "Qualified", value: 65 },
-  { label: "Site Visit", value: 34 },
-  { label: "Negotiation", value: 28 },
-  { label: "Booking", value: 18 },
-]
+  return leads.filter((lead) =>
+    /contact|call|reach|follow\s*up/i.test(lead.lead_status_name),
+  ).length
+}
+
+function buildMetricCards(
+  summary: ReportsSummary,
+  callsMade: number,
+): Array<{
+  id: string
+  label: string
+  value: number | string
+  icon: typeof UserPlus
+}> {
+  return [
+    {
+      id: "new-leads",
+      label: "New Leads",
+      value: summary.newLeads,
+      icon: UserPlus,
+    },
+    {
+      id: "calls-made",
+      label: "Calls Made",
+      value: callsMade,
+      icon: PhoneCall,
+    },
+    {
+      id: "site-visits",
+      label: "Site Visits",
+      value: summary.siteVisitsThisWeek,
+      icon: MapPin,
+    },
+    {
+      id: "bookings",
+      label: "Bookings",
+      value: summary.totalBookings,
+      icon: Bookmark,
+    },
+    {
+      id: "revenue",
+      label: "Revenue",
+      value: formatIndianCurrency(summary.totalRevenue),
+      icon: IndianRupee,
+    },
+  ]
+}
+
+const EMPTY_SUMMARY: ReportsSummary = {
+  totalBranches: 0,
+  totalAdmins: 0,
+  totalManagers: 0,
+  totalUsers: 0,
+  totalLeads: 0,
+  newLeads: 0,
+  convertedLeads: 0,
+  conversionRate: 0,
+  totalProjects: 0,
+  totalBookings: 0,
+  totalRevenue: 0,
+  activeLeads: 0,
+  siteVisitsThisWeek: 0,
+}
+
+const dashboardCardClass =
+  "gap-0 overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm ring-0"
 
 export function DashboardContent() {
+  const {
+    userData,
+    branches,
+    branchesLoading,
+    isAuthLoading,
+    roleTier,
+    branchId,
+    accessibleBranchIds,
+    getBranchName,
+  } = useUserData()
+
+  const userId = userData ? resolveAuthUserId(userData) : ""
+  const userName = String(userData?.result?.name ?? userData?.result?.email ?? "")
+  const branchName = branchId ? getBranchName(branchId) : undefined
+
+  const accessibleBranches = useMemo(() => {
+    if (accessibleBranchIds === "all") return branches
+    return branches.filter((branch) => accessibleBranchIds.includes(branch.id))
+  }, [branches, accessibleBranchIds])
+
+  const scope = useMemo(
+    () =>
+      buildDashboardScope({
+        roleTier,
+        userId,
+        branchId,
+        userName,
+        branchName,
+      }),
+    [roleTier, userId, branchId, userName, branchName],
+  )
+
+  const { data: rawData, isLoading } = useQuery({
+    queryKey: ["dashboard-raw", accessibleBranches.map((branch) => branch.id).join(",")],
+    enabled: !isAuthLoading && !branchesLoading,
+    queryFn: () => fetchReportsRawData(accessibleBranches),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const dashboardData = useMemo(
+    () => (rawData ? getReportsData(rawData, scope.filters) : null),
+    [rawData, scope.filters],
+  )
+
+  const summary = dashboardData?.summary ?? EMPTY_SUMMARY
+  const leadsBySource = dashboardData?.leadsBySource ?? []
+  const pipelineOverview = dashboardData?.pipelineOverview ?? []
+
+  const scopedLeads = useMemo(() => {
+    if (!rawData) return [] as ReportsLead[]
+
+    return rawData.leads.filter((lead) => {
+      if (scope.filters.branchId !== "all" && lead.branch_id !== scope.filters.branchId) {
+        return false
+      }
+      if (scope.filters.userId !== "all" && lead.assigned_to_id !== scope.filters.userId) {
+        return false
+      }
+      return true
+    })
+  }, [rawData, scope.filters.branchId, scope.filters.userId])
+
+  const useOrgFollowups =
+    scope.filters.branchId === "all" && scope.filters.userId === "all"
+
+  const callsMade = countCallsMade(
+    scopedLeads,
+    useOrgFollowups ? rawData?.leadMetrics?.followups_this_week : undefined,
+  )
+
+  const metricCards = buildMetricCards(summary, callsMade)
+  const dataLoading = isLoading || !dashboardData
+  const pipelineMax = Math.max(...pipelineOverview.map((item) => item.value), 0)
+  const yAxisMax = pipelineMax <= 0 ? 10 : Math.ceil(pipelineMax / 50) * 50 || pipelineMax
+
   return (
     <DashboardPageLayout className="w-full">
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6">
-        <div className="mb-5 flex items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-xl font-semibold md:text-2xl">
-              <BarChart3 className="h-6 w-6 text-primary" />
-              Reporting Dashboard
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Live overview of leads, pipeline, and revenue performance
-            </p>
-          </div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-background p-4 md:p-6">
+        <div className="mb-6">
+          <h1 className="flex items-center gap-2.5 text-xl font-semibold text-primary md:text-2xl">
+            <LayoutDashboard className="h-6 w-6 shrink-0" />
+            Reporting Dashboard
+          </h1>
         </div>
 
-        <section className="mb-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-5">
-          {dashboardMetrics.map((metric) => {
+        <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {metricCards.map((metric) => {
             const Icon = metric.icon
 
             return (
-              <Card
-                key={metric.id}
-                className={cn(
-                  "min-h-[104px] border shadow-sm transition-all duration-200 hover:shadow-md",
-                  metric.accentClassName,
-                )}
-              >
-                <CardContent className="flex h-full items-center px-4 py-5">
-                  <div className="flex w-full items-center justify-between gap-3">
+              <Card key={metric.id} className={cn(dashboardCardClass, "min-h-[108px]")}>
+                <CardContent className="flex h-full items-center px-4 py-5 sm:px-5">
+                  <div className="flex w-full items-center gap-3.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      <Icon className="h-5 w-5 text-muted-foreground" />
+                    </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                         {metric.label}
                       </p>
-                      <p
-                        className={cn(
-                          "mt-2 text-3xl font-bold tabular-nums leading-none tracking-tight",
-                          metric.id === "revenue" && "text-2xl",
-                        )}
-                      >
-                        {typeof metric.value === "number"
-                          ? metric.value.toLocaleString("en-IN")
-                          : metric.value}
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg",
-                        metric.iconClassName,
+                      {dataLoading ? (
+                        <Skeleton className="mt-2 h-8 w-20" />
+                      ) : (
+                        <p
+                          className={cn(
+                            "mt-1.5 font-bold tabular-nums leading-none tracking-tight text-foreground",
+                            metric.id === "revenue" ? "text-2xl" : "text-3xl",
+                          )}
+                        >
+                          {typeof metric.value === "number"
+                            ? metric.value.toLocaleString("en-IN")
+                            : metric.value}
+                        </p>
                       )}
-                    >
-                      <Icon className="h-5 w-5" />
                     </div>
                   </div>
                 </CardContent>
@@ -135,23 +231,61 @@ export function DashboardContent() {
           })}
         </section>
 
-        <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <Card className="border shadow-sm">
-            <CardHeader className="border-b pb-4">
-              <CardTitle className="text-base font-semibold">Leads by Source</CardTitle>
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-2 xl:items-stretch">
+          <Card className={cn(dashboardCardClass, "flex min-h-[400px] flex-col xl:min-h-[430px]")}>
+            <CardHeader className="border-b border-border/70 px-5 pb-4">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                Leads by Source
+              </CardTitle>
             </CardHeader>
-            <CardContent className="py-8">
-              <AnimatedDonutChart data={leadsBySource} size={320} strokeWidth={40} />
+            <CardContent className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
+              {dataLoading ? (
+                <Skeleton className="h-[220px] w-[220px] rounded-full" />
+              ) : leadsBySource.length > 0 ? (
+                <AnimatedDonutChart data={leadsBySource} size={220} strokeWidth={32} />
+              ) : (
+                <div className="flex min-h-[200px] items-center justify-center text-sm text-muted-foreground">
+                  No lead source data yet.
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          <Card className="border shadow-sm">
-            <CardHeader className="border-b pb-4">
-              <CardTitle className="text-base font-semibold">Pipeline Overview</CardTitle>
+          <Card className={cn(dashboardCardClass, "flex min-h-[400px] flex-col xl:min-h-[430px]")}>
+            <CardHeader className="border-b border-border/70 px-5 pb-4">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                Pipeline Overview
+              </CardTitle>
             </CardHeader>
-            <CardContent className="py-6">
-              <AnimatedBarChart data={pipelineOverview} />
+            <CardContent className="flex flex-1 items-center px-4 py-6 sm:px-5">
+              {dataLoading ? (
+                <div className="w-full space-y-3">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <Skeleton key={index} className="h-8 w-full" />
+                  ))}
+                </div>
+              ) : pipelineOverview.length > 0 ? (
+                <AnimatedBarChart data={pipelineOverview} yAxisMax={yAxisMax} />
+              ) : (
+                <div className="flex min-h-[200px] w-full items-center justify-center text-sm text-muted-foreground">
+                  No pipeline data yet.
+                </div>
+              )}
             </CardContent>
+            <CardFooter className="mt-auto flex items-center justify-between border-t border-border/70 bg-muted/40 px-5 py-4">
+              <span className="text-sm font-medium text-muted-foreground">
+                Overall Conversion
+              </span>
+              {dataLoading ? (
+                <Skeleton className="h-7 w-16" />
+              ) : (
+                <span className="text-xl font-bold tabular-nums text-foreground">
+                  {summary.conversionRate}%
+                </span>
+              )}
+            </CardFooter>
           </Card>
         </section>
       </div>

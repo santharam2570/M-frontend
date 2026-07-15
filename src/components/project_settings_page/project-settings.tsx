@@ -2,17 +2,30 @@
 
 import { useState, useEffect, useCallback, type SetStateAction } from "react"
 import { useRouter } from "next/navigation"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Plus, Check, MoreVertical, Pencil, Trash } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useUserData } from "@/hooks/useUserData"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Skeleton } from "@/components/ui/skeleton"
 import { GenericItemDialog } from "@/components/project_settings_page/generic-item-dialog"
 import { DeleteItemAlert } from "@/components/project_settings_page/delete-item-alert"
 import URLS from "@/config/urls"
+import {
+  fetchProjectSettingsListApi,
+  resolveProjectSettingId,
+  type ProjectSettingItem,
+  type ProjectSettingsListData,
+} from "@/lib/projects/project-api"
+import {
+  invalidateProjectSettingsQueries,
+  PROJECT_SETTINGS_QUERY_KEY,
+} from "@/lib/projects/project-shared-queries"
 
 interface StatusItem {
   id: string
@@ -64,28 +77,26 @@ const EMPTY_ITEMS: Record<ProjectSettingType, StatusItem[]> = {
   unit_status: [],
 }
 
-function resolveSettingId(item: {
-  _id?: string | { $oid?: string }
-  id?: string | number
-}): string {
-  if (item._id && typeof item._id === "object" && item._id.$oid) {
-    return item._id.$oid
-  }
-
-  return String(item._id ?? item.id ?? "")
-}
-
-function mapSimpleSettingItems(items: Record<string, unknown>[] | undefined): StatusItem[] {
+function mapSimpleSettingItems(items: ProjectSettingItem[] | undefined): StatusItem[] {
   return (items || []).map((item) => {
-    const id = resolveSettingId(item as { _id?: string; id?: string | number })
+    const id = resolveProjectSettingId(item)
     return {
       id,
-      name: item.name as string,
-      color: (item.color as string) || "#000000",
+      name: item.name ?? "",
+      color: item.color || "#000000",
       isDefault: item.default === 1,
-      createdOn: (item.create_date as string) || "",
+      createdOn: item.create_date || "",
     }
   })
+}
+
+function mapSettingsToItems(data: ProjectSettingsListData): Record<ProjectSettingType, StatusItem[]> {
+  return {
+    ...EMPTY_ITEMS,
+    rera_status: mapSimpleSettingItems(data.rera_status),
+    project_status: mapSimpleSettingItems(data.project_status),
+    unit_status: mapSimpleSettingItems(data.unit_status),
+  }
 }
 
 function buildSimpleSettingPayload(
@@ -118,6 +129,9 @@ export function ProjectSettings() {
   const [deletingItem, setDeletingItem] = useState<StatusItem | null>(null)
   const { toast } = useToast()
   const router = useRouter()
+  const queryClient = useQueryClient()
+  const { userData, isAuthLoading } = useUserData()
+  const token = userData?.access_token as string | undefined
 
   const activeConfig = getTabConfig(activeTab)
   const activeType = activeConfig.apiType
@@ -134,7 +148,55 @@ export function ProjectSettings() {
     [],
   )
 
+  const {
+    data: settingsData,
+    isLoading: isSettingsLoading,
+    isError: isSettingsError,
+    error: settingsError,
+  } = useQuery({
+    queryKey: PROJECT_SETTINGS_QUERY_KEY,
+    queryFn: () => fetchProjectSettingsListApi(token),
+    enabled: Boolean(token) && !isAuthLoading,
+  })
+
+  // Hydrate from React Query cache immediately (shared with project list/detail).
+  useEffect(() => {
+    if (isAuthLoading) return
+    if (!token) {
+      router.push("/login")
+      return
+    }
+
+    const cached = queryClient.getQueryData<ProjectSettingsListData>(PROJECT_SETTINGS_QUERY_KEY)
+    if (cached) {
+      setItemsByType(mapSettingsToItems(cached))
+    }
+  }, [isAuthLoading, token, router, queryClient])
+
+  useEffect(() => {
+    if (!settingsData) return
+    setItemsByType(mapSettingsToItems(settingsData))
+  }, [settingsData])
+
+  useEffect(() => {
+    if (!isSettingsError) return
+    toast({
+      title: "Error fetching data",
+      description:
+        settingsError instanceof Error
+          ? settingsError.message
+          : "An unexpected error occurred while fetching project settings.",
+      variant: "destructive",
+    })
+  }, [isSettingsError, settingsError, toast])
+
+  const markSettingsCacheStale = useCallback(() => {
+    void invalidateProjectSettingsQueries(queryClient)
+  }, [queryClient])
+
   const getAuthToken = useCallback(async (): Promise<string | null> => {
+    if (token) return token
+
     const storedData = localStorage.getItem("map_user")
     if (!storedData) {
       router.push("/login")
@@ -142,67 +204,26 @@ export function ProjectSettings() {
     }
 
     const parsed = JSON.parse(storedData)
-    const token = parsed?.access_token
+    const accessToken = parsed?.access_token
 
-    if (!token) {
+    if (!accessToken) {
       router.push("/login")
       return null
     }
 
-    return token
-  }, [router])
-
-  const fetchSettings = useCallback(async () => {
-    try {
-      const token = await getAuthToken()
-      if (!token) return
-
-      const response = await fetch(URLS.PROJECT_SETTINGS_LIST, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      const result = await response.json()
-
-      if (response.ok && result.code === 200) {
-        const data = result.data || {}
-        setItemsByType({
-          ...EMPTY_ITEMS,
-          rera_status: mapSimpleSettingItems(data.rera_status),
-          project_status: mapSimpleSettingItems(data.project_status),
-          unit_status: mapSimpleSettingItems(data.unit_status),
-        })
-      } else {
-        toast({
-          title: "Error fetching data",
-          description: result.msg || "Failed to fetch project settings.",
-          variant: "destructive",
-        })
-      }
-    } catch {
-      toast({
-        title: "Error fetching data",
-        description: "An unexpected error occurred while fetching project settings.",
-        variant: "destructive",
-      })
-    }
-  }, [getAuthToken, toast])
-
-  useEffect(() => {
-    fetchSettings()
-  }, [fetchSettings])
+    return accessToken
+  }, [router, token])
 
   const handleAdd = async (data: { name: string; color: string }) => {
     try {
-      const token = await getAuthToken()
-      if (!token) return
+      const authToken = await getAuthToken()
+      if (!authToken) return
 
       const response = await fetch(URLS.ADD_PROJECT_SETTINGS, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify(buildSimpleSettingPayload(activeType, data)),
       })
@@ -217,7 +238,7 @@ export function ProjectSettings() {
 
         const created = responseData.data || {}
         const newItem: StatusItem = {
-          id: resolveSettingId(created) || String(activeItems.length + 1),
+          id: resolveProjectSettingId(created) || String(activeItems.length + 1),
           name: data.name,
           color: (created.color as string) || data.color,
           isDefault: false,
@@ -226,6 +247,7 @@ export function ProjectSettings() {
 
         setItemsForType(activeType, [...activeItems, newItem])
         setIsAddDialogOpen(false)
+        markSettingsCacheStale()
       } else {
         throw new Error(responseData.msg || `Failed to add ${activeConfig.label.toLowerCase()}.`)
       }
@@ -241,8 +263,8 @@ export function ProjectSettings() {
 
   const handleUpdate = async (id: string, data: { name: string; color: string }) => {
     try {
-      const token = await getAuthToken()
-      if (!token) return
+      const authToken = await getAuthToken()
+      if (!authToken) return
 
       const existing = activeItems.find((item) => item.id === id)
       const payload = buildSimpleSettingPayload(
@@ -255,7 +277,7 @@ export function ProjectSettings() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify(payload),
       })
@@ -270,6 +292,7 @@ export function ProjectSettings() {
         )
         setIsEditDialogOpen(false)
         setEditingItem(null)
+        markSettingsCacheStale()
         toast({
           title: "Success",
           description: `${activeConfig.label} updated successfully.`,
@@ -296,13 +319,13 @@ export function ProjectSettings() {
     if (!deletingItem) return
 
     try {
-      const token = await getAuthToken()
-      if (!token) return
+      const authToken = await getAuthToken()
+      if (!authToken) return
 
       const response = await fetch(`${URLS.DELETE_PROJECT_SETTINGS}/${deletingItem.id}`, {
         method: "DELETE",
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${authToken}`,
           "Content-Type": "application/json",
         },
       })
@@ -311,6 +334,7 @@ export function ProjectSettings() {
 
       if (response.ok && data.code === 200) {
         setItemsForType(activeType, (prev) => prev.filter((item) => item.id !== deletingItem.id))
+        markSettingsCacheStale()
         toast({
           title: "Success",
           description: `${activeConfig.label} deleted successfully.`,
@@ -333,14 +357,14 @@ export function ProjectSettings() {
 
   const handleSetDefault = async (id: string) => {
     try {
-      const token = await getAuthToken()
-      if (!token) return
+      const authToken = await getAuthToken()
+      if (!authToken) return
 
       const response = await fetch(`${URLS.PROJECT_SETTINGS_DEFAULT}/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({ type: activeType }),
       })
@@ -354,6 +378,7 @@ export function ProjectSettings() {
             isDefault: item.id === id,
           })),
         )
+        markSettingsCacheStale()
         toast({
           title: "Success",
           description: `Default ${activeConfig.label.toLowerCase()} updated successfully.`,
@@ -466,45 +491,63 @@ export function ProjectSettings() {
     </Table>
   )
 
+  const hasAnyItems =
+    itemsByType.rera_status.length > 0 ||
+    itemsByType.project_status.length > 0 ||
+    itemsByType.unit_status.length > 0
+
+  const showLoading =
+    isAuthLoading || (isSettingsLoading && !settingsData && !hasAnyItems)
+
   return (
     <Card className="border-none shadow-sm">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-xl font-semibold text-gray-800">Project</CardTitle>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="rera-status" className="w-full" onValueChange={setActiveTab}>
-          <div className="flex items-center justify-between mb-6 gap-4">
-            <TabsList className="bg-gray-100">
-              {PROJECT_SETTING_TABS.map((tab) => (
-                <TabsTrigger
-                  key={tab.tabValue}
-                  value={tab.tabValue}
-                  className="data-[state=active]:bg-white data-[state=active]:shadow-sm"
-                >
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            <Button
-              size="sm"
-              className="bg-black hover:bg-gray-800 text-sm h-8 px-3 shrink-0"
-              onClick={() => setIsAddDialogOpen(true)}
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              {activeConfig.addButtonLabel}
-            </Button>
+        {showLoading ? (
+          <div className="space-y-4 pt-2">
+            <Skeleton className="h-9 w-full max-w-xl" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
+        ) : (
+          <Tabs defaultValue="rera-status" className="w-full" onValueChange={setActiveTab}>
+            <div className="flex items-center justify-between mb-6 gap-4">
+              <TabsList className="bg-gray-100">
+                {PROJECT_SETTING_TABS.map((tab) => (
+                  <TabsTrigger
+                    key={tab.tabValue}
+                    value={tab.tabValue}
+                    className="data-[state=active]:bg-white data-[state=active]:shadow-sm"
+                  >
+                    {tab.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <Button
+                size="sm"
+                className="bg-black hover:bg-gray-800 text-sm h-8 px-3 shrink-0"
+                onClick={() => setIsAddDialogOpen(true)}
+              >
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                {activeConfig.addButtonLabel}
+              </Button>
+            </div>
 
-          {PROJECT_SETTING_TABS.map((tab) => (
-            <TabsContent key={tab.tabValue} value={tab.tabValue} className="pt-6">
-              {renderStatusTable(
-                itemsByType[tab.apiType] ?? [],
-                tab.emptyMessage,
-                tab.nameColumnLabel,
-              )}
-            </TabsContent>
-          ))}
-        </Tabs>
+            {PROJECT_SETTING_TABS.map((tab) => (
+              <TabsContent key={tab.tabValue} value={tab.tabValue} className="pt-6">
+                {renderStatusTable(
+                  itemsByType[tab.apiType] ?? [],
+                  tab.emptyMessage,
+                  tab.nameColumnLabel,
+                )}
+              </TabsContent>
+            ))}
+          </Tabs>
+        )}
       </CardContent>
 
       <GenericItemDialog

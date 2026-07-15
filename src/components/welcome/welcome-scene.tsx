@@ -4,6 +4,7 @@ import { Playfair_Display } from "next/font/google";
 import Link from "next/link";
 
 import { EarthGlobe } from "@/components/welcome/earth-globe";
+import { BRAND_NAME } from "@/config/brand";
 
 const welcomeFont = Playfair_Display({
   subsets: ["latin"],
@@ -70,7 +71,7 @@ export function WelcomeScene() {
                 "0 0 48px rgba(59, 130, 246, 0.2), 0 2px 24px rgba(0, 0, 0, 0.35)",
             }}
           >
-            Welcome to Makesh Asset Promoters
+            Welcome to {BRAND_NAME}
           </h1>
 
           <div

@@ -402,9 +402,9 @@ export function BookingFormDrawer({
                 />
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
+              <div className="rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-foreground/90">
                 Received with thanks from{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-semibold text-foreground">
                   {salutation} {customerName || "—"}
                 </span>
               </div>

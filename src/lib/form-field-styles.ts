@@ -39,24 +39,59 @@ export const formModalFooterButtonClassName = "h-10 w-full min-w-0 rounded-md px
 
 /** Lead detail page typography scale */
 export const leadDetailPageTitleClassName =
-  "text-xl lg:text-2xl font-bold text-slate-900 tracking-tight"
-export const leadDetailSectionTitleClassName = "text-base font-semibold text-slate-900"
+  "text-xl lg:text-2xl font-bold text-foreground tracking-tight"
+export const leadDetailSectionTitleClassName = "text-base font-semibold text-foreground"
 export const leadDetailSubsectionLabelClassName =
-  "text-xs font-semibold uppercase tracking-wide text-slate-500"
-export const leadDetailFieldLabelClassName = "text-xs font-medium text-slate-500"
-export const leadDetailFieldValueClassName = "text-sm font-medium text-slate-900"
+  "text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+export const leadDetailFieldLabelClassName = "text-xs font-medium text-muted-foreground"
+export const leadDetailFieldValueClassName = "text-sm font-medium text-foreground"
 /** Sidebar detail fields (Current Staying, Customer Type, etc.) */
 export const leadDetailSidebarFieldLabelClassName =
   "text-sm font-extrabold text-primary"
 export const leadDetailSidebarFieldValueClassName =
   "text-base font-normal text-foreground"
 export const leadDetailSidebarInputClassName = "h-10 text-base font-normal text-foreground"
-export const leadDetailMetaTextClassName = "text-sm text-slate-500"
-export const leadDetailMetaLabelClassName = "text-sm font-medium text-slate-500"
-export const leadDetailCaptionClassName = "text-xs text-slate-500"
-export const leadDetailBodyClassName = "text-sm text-slate-700"
-export const leadDetailBodyMutedClassName = "text-sm text-slate-500"
+export const leadDetailMetaTextClassName = "text-sm text-muted-foreground"
+export const leadDetailMetaLabelClassName = "text-sm font-medium text-muted-foreground"
+export const leadDetailCaptionClassName = "text-xs text-muted-foreground"
+export const leadDetailBodyClassName = "text-sm text-foreground/90"
+export const leadDetailBodyMutedClassName = "text-sm text-muted-foreground"
 export const leadDetailInlineFieldClassName = "h-9 text-sm"
+
+/** Detail page layout & surfaces (theme-aware for light + Dark Night) */
+export const leadDetailPageBackgroundClassName = "bg-background"
+export const leadDetailContentAreaClassName = "bg-background"
+export const leadDetailCardClassName =
+  "rounded-xl border border-border bg-card text-card-foreground shadow-sm dark:shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
+export const leadDetailHeaderClassName = "bg-card border-b border-border"
+export const leadDetailTabBarClassName = "border-b border-border bg-card"
+export const leadDetailIconBoxClassName =
+  "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground"
+export const leadDetailIconBoxSmClassName =
+  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-card text-muted-foreground shadow-sm"
+export const leadDetailListItemClassName =
+  "flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2.5"
+export const leadDetailDashedEmptyClassName =
+  "rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground"
+export const leadDetailDividerClassName = "border-b border-border"
+export const leadDetailTimelineLineClassName = "bg-border"
+export const leadDetailActivityCardClassName =
+  "rounded-xl border border-border bg-card p-4 flex-1 shadow-sm"
+export const leadDetailActionButtonClassName =
+  "h-8 w-8 rounded-full border-border bg-card hover:bg-muted"
+export const leadDetailPopoverClassName =
+  "rounded-lg border border-border bg-popover p-3 shadow-lg"
+export const leadDetailMetricBoxClassName = "border-border bg-muted/50 hover:bg-muted"
+export const leadDetailStatCardClassName =
+  "rounded-lg border border-border bg-card px-4 py-3 shadow-sm"
+export const leadDetailTableWrapClassName =
+  "overflow-auto rounded-lg border border-border bg-card"
+export const leadDetailTableHeaderRowClassName = "bg-muted/80 hover:bg-muted/80"
+export const leadDetailTableRowClassName = "even:bg-muted/40 hover:bg-muted/50"
+export const leadDetailInputClassName =
+  "border-border bg-background hover:bg-muted/50"
+export const leadDetailContactRowClassName =
+  "flex items-start gap-3 border-b border-border py-3 last:border-b-0 last:pb-0 first:pt-0"
 
 /** Shared theme tokens for lead list, detail, and settings pages */
 export const themePrimaryLinkClassName = "text-primary hover:text-primary/80 hover:underline"

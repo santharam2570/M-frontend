@@ -1,4 +1,4 @@
-export type ProjectStatus = "active" | "upcoming" | "sold_out" | "on_hold"
+export type ProjectStatus = "active" | "inactive" | "upcoming" | "sold_out" | "on_hold"
 
 export type ReraStatus = "approved" | "pending" | "not_applicable"
 
@@ -105,6 +105,7 @@ export interface Project {
   name: string
   location: string
   area_locality: string
+  branch_id?: string
   card_color?: string
   sort_order?: number
   price_per_sqft: number
@@ -124,7 +125,7 @@ export interface Project {
   property_types: PropertyType[]
   budget_min: number
   budget_max: number
-  status: ProjectStatus
+  status: string
   description?: string
   create_date: string
   units: ProjectUnit[]
@@ -166,10 +167,19 @@ export interface LeadMatchCriteria {
 }
 
 export interface ProjectFilterState {
+  branch_id: string
   status: string
   location: string
   property_type: string
   rera_status: string
+}
+
+export const EMPTY_PROJECT_FILTERS: ProjectFilterState = {
+  branch_id: "",
+  status: "",
+  location: "",
+  property_type: "",
+  rera_status: "",
 }
 
 export const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
@@ -191,6 +201,7 @@ export const UNIT_STATUS_LABELS = {
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   active: "Active",
+  inactive: "Inactive",
   upcoming: "Upcoming",
   sold_out: "Sold Out",
   on_hold: "On Hold",

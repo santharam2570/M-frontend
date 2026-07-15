@@ -3,9 +3,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { Suspense } from "react";
 import { TwoStepForm } from "@/components/forms/two-step-form";
+import { MapLogo } from "@/components/brand/map-logo";
+import { BRAND_NAME } from "@/config/brand";
 
 export const metadata: Metadata = {
-  title: "Two-Step Verification | MAP Real Estate",
+  title: `Two-Step Verification | ${BRAND_NAME}`,
   description: "Verify your MAP account with a one-time code.",
 };
 
@@ -27,16 +29,7 @@ export default function TwoStepPage() {
       </div>
 
       <div className="flex w-full max-w-md flex-col items-center">
-        <Link href="/" className="mb-8 transition-opacity hover:opacity-90">
-          <Image
-            src="/LOGOmap.png"
-            alt="Mahesh Asset Promoters"
-            width={280}
-            height={105}
-            priority
-            className="h-auto w-44 object-contain sm:w-56"
-          />
-        </Link>
+        <MapLogo className="mb-8" />
 
         <div className="relative w-full overflow-hidden rounded-2xl border border-white/40 bg-white/95 shadow-[0_24px_64px_rgba(15,43,74,0.22)] backdrop-blur-xl sm:rounded-3xl">
           <div

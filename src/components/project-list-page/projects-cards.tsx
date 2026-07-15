@@ -35,12 +35,16 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { normalizeCardColor } from "@/lib/projects/project-api"
+import {
+  getProjectStatusLabel,
+  normalizeCardColor,
+  resolveProjectStatusOption,
+  type ProjectSettingOption,
+} from "@/lib/projects/project-api"
 import type { Project } from "@/lib/projects/types"
 import {
   getProjectCardColor,
   PROJECT_CARD_COLORS,
-  PROJECT_STATUS_LABELS,
   PROPERTY_TYPE_LABELS,
   RERA_STATUS_LABELS,
 } from "@/lib/projects/types"
@@ -53,19 +57,49 @@ interface ProjectsCardsProps {
   isReorderMode?: boolean
   onReorder?: (orderedIds: string[]) => void
   onColorChange?: (projectId: string, color: string) => void
+  statusOptions?: ProjectSettingOption[]
 }
 
-function StatusBadge({ status }: { status: Project["status"] }) {
-  const styles: Record<Project["status"], string> = {
+function StatusBadge({
+  status,
+  statusOptions = [],
+}: {
+  status: string
+  statusOptions?: ProjectSettingOption[]
+}) {
+  const option = resolveProjectStatusOption(status, statusOptions)
+  const label = getProjectStatusLabel(status, statusOptions)
+  const normalized = label.toLowerCase().trim()
+
+  const fallbackStyles: Record<string, string> = {
     active: "bg-emerald-500/90 text-white border-0",
+    inactive: "bg-slate-500/90 text-white border-0",
     upcoming: "bg-blue-500/90 text-white border-0",
+    "sold out": "bg-slate-500/90 text-white border-0",
     sold_out: "bg-slate-500/90 text-white border-0",
+    "on hold": "bg-amber-500/90 text-white border-0",
     on_hold: "bg-amber-500/90 text-white border-0",
   }
 
+  if (!label) return null
+
   return (
-    <Badge className={cn("text-[11px] font-semibold uppercase tracking-wide", styles[status])}>
-      {PROJECT_STATUS_LABELS[status]}
+    <Badge
+      className={cn(
+        "text-[11px] font-semibold uppercase tracking-wide",
+        !option?.color && (fallbackStyles[normalized] || fallbackStyles[status] || "bg-slate-500/90 text-white border-0"),
+      )}
+      style={
+        option?.color
+          ? {
+              backgroundColor: option.color,
+              color: "#fff",
+              borderColor: "transparent",
+            }
+          : undefined
+      }
+    >
+      {label}
     </Badge>
   )
 }
@@ -195,11 +229,13 @@ function ProjectCardContent({
   cardColor,
   isReorderMode,
   onColorChange,
+  statusOptions = [],
 }: {
   project: Project
   cardColor: string
   isReorderMode: boolean
   onColorChange?: (color: string) => void
+  statusOptions?: ProjectSettingOption[]
 }) {
   const soldPct =
     project.total_units > 0
@@ -261,7 +297,7 @@ function ProjectCardContent({
             {!isReorderMode && onColorChange ? (
               <CardColorPicker color={cardColor} onColorChange={onColorChange} />
             ) : null}
-            <StatusBadge status={project.status} />
+            <StatusBadge status={project.status} statusOptions={statusOptions} />
           </div>
         </div>
 
@@ -372,11 +408,13 @@ function SortableProjectCard({
   index,
   isReorderMode,
   onColorChange,
+  statusOptions = [],
 }: {
   project: Project
   index: number
   isReorderMode: boolean
   onColorChange?: (color: string) => void
+  statusOptions?: ProjectSettingOption[]
 }) {
   const cardColor = getProjectCardColor(project, index)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -397,6 +435,7 @@ function SortableProjectCard({
         cardColor={cardColor}
         isReorderMode={false}
         onColorChange={onColorChange}
+        statusOptions={statusOptions}
       />
     )
   }
@@ -408,6 +447,7 @@ function SortableProjectCard({
         cardColor={cardColor}
         isReorderMode
         onColorChange={onColorChange}
+        statusOptions={statusOptions}
       />
     </div>
   )
@@ -443,6 +483,7 @@ export function ProjectsCards({
   isReorderMode = false,
   onReorder,
   onColorChange,
+  statusOptions = [],
 }: ProjectsCardsProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -492,6 +533,7 @@ export function ProjectsCards({
           project={project}
           index={index}
           isReorderMode={isReorderMode}
+          statusOptions={statusOptions}
           onColorChange={
             onColorChange ? (color) => onColorChange(project._id, color) : undefined
           }

@@ -28,39 +28,46 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import URLS from "@/config/urls"
-import { permissionModules as modules } from "@/config/permissions-modules"
 import {
   AUTH_USER_STORAGE_KEY,
   ROLE_TIER_LABELS,
+  type Branch,
   type RoleTier,
   canCreateUsers,
   canManageTargetUser,
   getAllUserRoleMeta,
   getAssignableTiers,
+  getEditableTiers,
   getOrgIdFromAuth,
   getPermissionsFromRoleData,
   getRoleTier,
   getStoredAuthUser,
   hasAllBranchAccess,
+  isSuperAdminUser,
+  patchAuthUserRolePermissions,
+  resolveAuthUserId,
   setUserRoleMeta,
 } from "@/lib/auth"
+import { resolveBranchObjectId } from "@/lib/branches/branch-id"
 import { useUserData } from "@/hooks/useUserData"
-import { parseJsonResponse } from "@/lib/api"
-import { cn } from "@/lib/utils"
-import { formatDateForAgeing } from "@/lib/date-ageing"
 import {
-  themePrimaryAvatarClassName,
-  themePrimaryBadgeClassName,
-} from "@/lib/form-field-styles"
+  buildEmptyPermissions,
+  fetchPermissionCatalog,
+  fetchRoles,
+  fetchUserPermissions,
+  updateUserPermission,
+  type PermissionModule,
+} from "@/lib/roles/roles-api"
+import { fetchUsersList, invalidateUsersListCache } from "@/lib/users/users-api"
+import { formatDateForAgeing } from "@/lib/date-ageing"
+import { themePrimaryBadgeClassName } from "@/lib/form-field-styles"
 import { AddUserDialog, type UserFormData } from "./add-user-dialog"
 import { EditUserDialog, type EditableUser } from "./edit-user-dialog"
+import { UserPermissionsSheet, type UserDetailsSavePayload } from "./user-permissions-sheet"
 
 interface User {
   id: string
@@ -73,6 +80,15 @@ interface User {
   branch_id?: string
   created: string
   status: "Active" | "Inactive"
+  aadhaar_number?: string
+  aadhaar_document?: string
+  pan_number?: string
+  pan_document?: string
+  address?: string
+  source?: string
+  referred_by?: string
+  reference_contact_number?: string
+  passport_number?: string
 }
 
 interface Role {
@@ -115,69 +131,42 @@ function resolveUserId(user: Record<string, unknown>): string {
   return ""
 }
 
-function extractUsersFromApiResponse(data: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(data)) return data as Array<Record<string, unknown>>
-
-  if (data && typeof data === "object") {
-    const record = data as Record<string, unknown>
-    if (Array.isArray(record.users)) return record.users as Array<Record<string, unknown>>
-    if (Array.isArray(record.data)) return record.data as Array<Record<string, unknown>>
-    if (Array.isArray(record.items)) return record.items as Array<Record<string, unknown>>
-  }
-
-  return []
-}
-
 function normalizeBranchId(value: unknown): string | undefined {
   if (value === null || value === undefined || value === "") return undefined
-  return String(value)
+
+  if (typeof value === "object") {
+    if ("$oid" in value) {
+      const oid = (value as { $oid?: string }).$oid
+      return oid ? String(oid) : undefined
+    }
+
+    const record = value as Record<string, unknown>
+    if ("_id" in record || "id" in record || "branch_id" in record) {
+      return normalizeBranchId(record._id ?? record.id ?? record.branch_id)
+    }
+  }
+
+  const normalized = String(value).trim()
+  return normalized || undefined
 }
 
-async function fetchUsersList(token: string): Promise<Array<Record<string, unknown>>> {
-  try {
-    const response = await fetch(URLS.USERS_LIST, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    })
+function resolveUserBranchId(user: Record<string, unknown>, orgId?: number): string | undefined {
+  const direct = normalizeBranchId(user.branch_id ?? user.branchId)
+  if (direct) return resolveBranchObjectId(direct, orgId) ?? direct
 
-    if (!response.ok) return []
-
-    const result = await parseJsonResponse<Record<string, unknown>>(response)
-    return extractUsersFromApiResponse(result.data ?? result)
-  } catch {
-    return []
+  if (user.branch && typeof user.branch === "object") {
+    const branch = user.branch as Record<string, unknown>
+    const fromBranch = normalizeBranchId(branch._id ?? branch.id ?? branch.branch_id)
+    if (fromBranch) return resolveBranchObjectId(fromBranch, orgId) ?? fromBranch
   }
+
+  return undefined
 }
 
-async function fetchRolesList(token: string): Promise<Role[]> {
-  try {
-    const response = await fetch(URLS.ROLES, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    })
-
-    if (!response.ok) return []
-
-    const result = await parseJsonResponse<unknown>(response)
-    const items = Array.isArray(result)
-      ? extractUsersFromApiResponse(result)
-      : extractUsersFromApiResponse((result as Record<string, unknown>).data ?? result)
-
-    return items
-      .map((role) => ({
-        _id: resolveUserId(role),
-        name: String(role.role_name ?? role.name ?? "Unknown Role"),
-      }))
-      .filter((role) => role._id)
-  } catch {
-    return []
-  }
+function matchesBranchFilter(userBranchId: string | undefined, branchFilter: string): boolean {
+  if (branchFilter === "all") return true
+  if (!userBranchId) return false
+  return userBranchId === branchFilter
 }
 
 function formatUsers(
@@ -191,7 +180,7 @@ function formatUsers(
       const id = resolveUserId(user)
       const meta = metaMap[id]
       const apiTier = user.role_tier as RoleTier | undefined
-      const apiBranch = normalizeBranchId(user.branch_id)
+      const apiBranch = resolveUserBranchId(user, orgId)
 
       return {
         id,
@@ -204,6 +193,17 @@ function formatUsers(
         branch_id: apiBranch ?? meta?.branch_id,
         created: String(user.create_date ?? user.created_at ?? user.created ?? ""),
         status: isActiveUserStatus(user.status) ? ("Active" as const) : ("Inactive" as const),
+        aadhaar_number: String(user.aadhaar_number ?? user.aadhaar ?? "").trim() || undefined,
+        aadhaar_document: String(user.aadhaar_document ?? user.aadhaar_doc ?? "").trim() || undefined,
+        pan_number: String(user.pan_number ?? user.pan ?? "").trim() || undefined,
+        pan_document: String(user.pan_document ?? user.pan_doc ?? "").trim() || undefined,
+        address: String(user.address ?? "").trim() || undefined,
+        source: String(user.source ?? "").trim() || undefined,
+        referred_by: String(user.referred_by ?? user.referredBy ?? "").trim() || undefined,
+        reference_contact_number:
+          String(user.reference_contact_number ?? user.reference_contact ?? user.reference_phone ?? "")
+            .trim() || undefined,
+        passport_number: String(user.passport_number ?? user.passport ?? "").trim() || undefined,
       }
     })
     .filter((user) => user.id)
@@ -224,6 +224,7 @@ export function ManageUsers() {
   const { toast } = useToast()
   const {
     userData,
+    isAuthLoading,
     roleTier: currentTier,
     orgId,
     branches,
@@ -261,76 +262,108 @@ export function ManageUsers() {
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false)
   const [userToEdit, setUserToEdit] = React.useState<EditableUser | null>(null)
 
+  const editAssignableTiers = React.useMemo(
+    () => getEditableTiers(userData, userToEdit?.role_tier),
+    [userData, userToEdit?.role_tier]
+  )
+
   const [selectedUser, setSelectedUser] = React.useState<User | null>(null)
   const [isPermissionSheetOpen, setIsPermissionSheetOpen] = React.useState(false)
   const [isLoadingPermissions, setIsLoadingPermissions] = React.useState(false)
-  const [selectedUserRoleId, setSelectedUserRoleId] = React.useState<string | null>(null)
   const [modulePermissions, setModulePermissions] = React.useState<Record<string, boolean>>({})
+  const [permissionModules, setPermissionModules] = React.useState<PermissionModule[]>([])
 
-  const fetchUsers = React.useCallback(async () => {
-    const token = getAuthToken(router)
-    if (!token) return
+  const applyUsersFromRaw = React.useCallback(
+    (rawUsers: Array<Record<string, unknown>>) => {
+      const resolvedOrgId = orgId || getOrgIdFromAuth(getStoredAuthUser())
+      setUsers(rawUsers.length > 0 ? formatUsers(rawUsers, resolvedOrgId) : [])
+    },
+    [orgId]
+  )
 
-    try {
-      setIsLoading(true)
-      const rawUsers = await fetchUsersList(token)
+  const reloadUsers = React.useCallback(
+    async (options?: { force?: boolean; showLoading?: boolean }) => {
+      const token = getAuthToken(router)
+      if (!token) return
 
-      if (rawUsers.length > 0) {
-        const authUser = getStoredAuthUser()
-        const resolvedOrgId = orgId || getOrgIdFromAuth(authUser)
-        setUsers(formatUsers(rawUsers, resolvedOrgId))
-      } else {
-        setUsers([])
+      if (options?.showLoading !== false) setIsLoading(true)
+      try {
+        const rawUsers = await fetchUsersList(token, { force: options?.force })
+        applyUsersFromRaw(rawUsers)
+      } catch (error) {
+        console.error("Error fetching users:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load users. Please try again.",
+          variant: "destructive",
+        })
+      } finally {
+        if (options?.showLoading !== false) setIsLoading(false)
       }
-    } catch (error) {
-      console.error("Error fetching users:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load users. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [router, toast, orgId])
+    },
+    [router, toast, applyUsersFromRaw]
+  )
 
-  const fetchRoles = React.useCallback(async () => {
-    const token = getAuthToken(router)
-    if (!token) return
-
-    try {
-      const roleOptions = await fetchRolesList(token)
-      if (roleOptions.length > 0) {
-        setRoles(roleOptions)
-      }
-    } catch (error) {
-      console.error("Error fetching roles:", error)
-      toast({
-        title: "Error",
-        description: "An unexpected error occurred while fetching roles.",
-        variant: "destructive",
-      })
-    }
-  }, [router, toast])
+  // Wait for auth hydration so we do not fetch once with orgId=0 and again with the real org.
+  // Key off user id (not roleData) so permission-sync updates do not refetch users/roles.
+  const authReady = !isAuthLoading && Boolean(userData)
+  const currentUserId = resolveAuthUserId(userData ?? {})
 
   React.useEffect(() => {
-    fetchUsers()
-    fetchRoles()
-  }, [fetchUsers, fetchRoles])
+    if (!authReady || !currentUserId) return
+
+    let cancelled = false
+
+    const loadInitialData = async () => {
+      const token = getAuthToken(router)
+      if (!token) return
+
+      setIsLoading(true)
+      try {
+        const resolvedOrgId = orgId || getOrgIdFromAuth(userData)
+        const [rawUsers, roleOptions] = await Promise.all([
+          fetchUsersList(token),
+          fetchRoles(resolvedOrgId, token),
+        ])
+
+        if (cancelled) return
+
+        applyUsersFromRaw(rawUsers)
+        setRoles(
+          roleOptions.map((role) => ({
+            _id: role.id,
+            name: role.name,
+          }))
+        )
+      } catch (error) {
+        if (cancelled) return
+        console.error("Error loading user management data:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load users. Please try again.",
+          variant: "destructive",
+        })
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+
+    void loadInitialData()
+    return () => {
+      cancelled = true
+    }
+    // userData intentionally omitted: only currentUserId / orgId gate reloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [authReady, currentUserId, orgId, router, toast, applyUsersFromRaw])
 
   const visibleUsers = React.useMemo(() => {
     return users.filter((user) => {
       if (accessibleBranchIds !== "all") {
-        if (user.role_tier === "super_admin" || user.role_tier === "admin") return true
+        if (hasAllBranchAccess(user.role_tier)) return true
         if (!user.branch_id || !accessibleBranchIds.includes(user.branch_id)) return false
       }
 
-      if (branchFilter !== "all") {
-        if (user.role_tier === "super_admin" || user.role_tier === "admin") return true
-        return user.branch_id === branchFilter
-      }
-
-      return true
+      return matchesBranchFilter(user.branch_id, branchFilter)
     })
   }, [users, accessibleBranchIds, branchFilter])
 
@@ -369,7 +402,10 @@ export function ManageUsers() {
   const persistUserMeta = (userId: string, role_tier: RoleTier, branch_id?: string) => {
     const resolvedOrgId = orgId || getOrgIdFromAuth(getStoredAuthUser())
     if (resolvedOrgId) {
-      setUserRoleMeta(resolvedOrgId, userId, { role_tier, branch_id })
+      const normalizedBranchId = branch_id
+        ? resolveBranchObjectId(branch_id, resolvedOrgId) ?? branch_id
+        : undefined
+      setUserRoleMeta(resolvedOrgId, userId, { role_tier, branch_id: normalizedBranchId })
     }
   }
 
@@ -418,7 +454,8 @@ export function ManageUsers() {
         persistUserMeta(newUserId, formData.role_tier, formData.branch_id)
       }
 
-      await fetchUsers()
+      invalidateUsersListCache()
+      await reloadUsers({ force: true, showLoading: false })
       toast({ title: "Success", description: "User added successfully!" })
       return true
     } catch (error) {
@@ -436,6 +473,15 @@ export function ManageUsers() {
     const token = getAuthToken(router)
     if (!token) return false
 
+    const originalUser = users.find((u) => u.id === user.id)
+    const role = isSuperAdminUser(originalUser ?? user) ? originalUser!.role : user.role
+    const role_tier = isSuperAdminUser(originalUser ?? user)
+      ? originalUser!.role_tier
+      : user.role_tier
+    const branch_id = isSuperAdminUser(originalUser ?? user)
+      ? originalUser!.branch_id
+      : user.branch_id
+
     try {
       const response = await fetch(`${URLS.USER_UPDATE}/${user.id}`, {
         method: "PUT",
@@ -447,9 +493,9 @@ export function ManageUsers() {
           name: user.name,
           email: user.email,
           phone: user.phone,
-          role: user.role,
-          role_tier: user.role_tier,
-          branch_id: user.branch_id ?? "",
+          role,
+          role_tier,
+          branch_id: branch_id ?? "",
         }),
       })
 
@@ -463,10 +509,22 @@ export function ManageUsers() {
         return false
       }
 
-      persistUserMeta(user.id, user.role_tier, user.branch_id)
+      if (!isSuperAdminUser(originalUser ?? user)) {
+        persistUserMeta(user.id, role_tier, branch_id)
+      }
 
       setUsers((prev) =>
-        prev.map((u) => (u.id === user.id ? { ...u, ...user } : u))
+        prev.map((u) =>
+          u.id === user.id
+            ? {
+                ...u,
+                ...user,
+                role,
+                role_tier,
+                branch_id,
+              }
+            : u
+        )
       )
       toast({ title: "Success", description: "User updated successfully!" })
       return true
@@ -481,7 +539,260 @@ export function ManageUsers() {
     }
   }
 
+  const handleSaveUserDetails = async (details: UserDetailsSavePayload): Promise<boolean> => {
+    if (!selectedUser) return false
+
+    const token = getAuthToken(router)
+    if (!token) return false
+
+    try {
+      const response = await fetch(`${URLS.USER_UPDATE}/${selectedUser.id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: selectedUser.name,
+          email: selectedUser.email,
+          phone: selectedUser.phone,
+          role: selectedUser.role,
+          role_tier: selectedUser.role_tier,
+          branch_id: selectedUser.branch_id ?? "",
+          aadhaar_number: details.aadhaar_number,
+          pan_number: details.pan_number,
+          address: details.address,
+          source: details.source,
+          referred_by: details.referred_by,
+          reference_contact_number: details.reference_contact_number,
+          passport_number: details.passport_number,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        toast({
+          title: "Error",
+          description: errorData.msg || "Failed to update user details.",
+          variant: "destructive",
+        })
+        return false
+      }
+
+      const updatedDetails = {
+        aadhaar_number: details.aadhaar_number || undefined,
+        pan_number: details.pan_number || undefined,
+        address: details.address || undefined,
+        source: details.source || undefined,
+        referred_by: details.referred_by || undefined,
+        reference_contact_number: details.reference_contact_number || undefined,
+        passport_number: details.passport_number || undefined,
+      }
+
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.id === selectedUser.id ? { ...user, ...updatedDetails } : user
+        )
+      )
+      setSelectedUser((prev) => (prev ? { ...prev, ...updatedDetails } : prev))
+      toast({ title: "Success", description: "User details updated successfully!" })
+      setIsPermissionSheetOpen(false)
+      setSelectedUser(null)
+      return true
+    } catch (error) {
+      console.error("Error updating user details:", error)
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      })
+      return false
+    }
+  }
+
+  const handleUploadAadhaarDocument = async (file: File): Promise<string | null> => {
+    if (!selectedUser) return null
+
+    const token = getAuthToken(router)
+    if (!token) return null
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"]
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: "Invalid file type",
+        description: "Please upload a JPG, PNG, WEBP, or PDF file.",
+        variant: "destructive",
+      })
+      return null
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File too large",
+        description: "Aadhaar document must be under 5 MB.",
+        variant: "destructive",
+      })
+      return null
+    }
+
+    try {
+      const formData = new FormData()
+      formData.append("name", selectedUser.name)
+      formData.append("email", selectedUser.email)
+      formData.append("phone", selectedUser.phone)
+      formData.append("role", selectedUser.role)
+      formData.append("role_tier", selectedUser.role_tier)
+      formData.append("branch_id", selectedUser.branch_id ?? "")
+      formData.append("aadhaar_number", selectedUser.aadhaar_number ?? "")
+      formData.append("pan_number", selectedUser.pan_number ?? "")
+      formData.append("address", selectedUser.address ?? "")
+      formData.append("source", selectedUser.source ?? "")
+      formData.append("referred_by", selectedUser.referred_by ?? "")
+      formData.append("reference_contact_number", selectedUser.reference_contact_number ?? "")
+      formData.append("passport_number", selectedUser.passport_number ?? "")
+      formData.append("aadhaar_document", file)
+
+      const response = await fetch(`${URLS.USER_UPDATE}/${selectedUser.id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      })
+
+      const data = await response.json()
+      if (!response.ok || data.code === 400) {
+        toast({
+          title: "Error",
+          description: data.msg || "Failed to upload Aadhaar document.",
+          variant: "destructive",
+        })
+        return null
+      }
+
+      const uploadedDocument = String(
+        data.data?.aadhaar_document ?? data.data?.aadhaar_doc ?? file.name
+      )
+
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.id === selectedUser.id
+            ? { ...user, aadhaar_document: uploadedDocument }
+            : user
+        )
+      )
+      setSelectedUser((prev) =>
+        prev ? { ...prev, aadhaar_document: uploadedDocument } : prev
+      )
+      toast({ title: "Success", description: "Aadhaar document uploaded successfully!" })
+      return uploadedDocument
+    } catch (error) {
+      console.error("Error uploading Aadhaar document:", error)
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      })
+      return null
+    }
+  }
+
+  const handleUploadPanDocument = async (file: File): Promise<string | null> => {
+    if (!selectedUser) return null
+
+    const token = getAuthToken(router)
+    if (!token) return null
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"]
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: "Invalid file type",
+        description: "Please upload a JPG, PNG, WEBP, or PDF file.",
+        variant: "destructive",
+      })
+      return null
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File too large",
+        description: "PAN document must be under 5 MB.",
+        variant: "destructive",
+      })
+      return null
+    }
+
+    try {
+      const formData = new FormData()
+      formData.append("name", selectedUser.name)
+      formData.append("email", selectedUser.email)
+      formData.append("phone", selectedUser.phone)
+      formData.append("role", selectedUser.role)
+      formData.append("role_tier", selectedUser.role_tier)
+      formData.append("branch_id", selectedUser.branch_id ?? "")
+      formData.append("aadhaar_number", selectedUser.aadhaar_number ?? "")
+      formData.append("pan_number", selectedUser.pan_number ?? "")
+      formData.append("address", selectedUser.address ?? "")
+      formData.append("source", selectedUser.source ?? "")
+      formData.append("referred_by", selectedUser.referred_by ?? "")
+      formData.append("reference_contact_number", selectedUser.reference_contact_number ?? "")
+      formData.append("passport_number", selectedUser.passport_number ?? "")
+      formData.append("pan_document", file)
+
+      const response = await fetch(`${URLS.USER_UPDATE}/${selectedUser.id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      })
+
+      const data = await response.json()
+      if (!response.ok || data.code === 400) {
+        toast({
+          title: "Error",
+          description: data.msg || "Failed to upload PAN document.",
+          variant: "destructive",
+        })
+        return null
+      }
+
+      const uploadedDocument = String(
+        data.data?.pan_document ?? data.data?.pan_doc ?? file.name
+      )
+
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.id === selectedUser.id ? { ...user, pan_document: uploadedDocument } : user
+        )
+      )
+      setSelectedUser((prev) =>
+        prev ? { ...prev, pan_document: uploadedDocument } : prev
+      )
+      toast({ title: "Success", description: "PAN document uploaded successfully!" })
+      return uploadedDocument
+    } catch (error) {
+      console.error("Error uploading PAN document:", error)
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      })
+      return null
+    }
+  }
+
   const handleUserStatusChange = async (userId: string, currentStatus: string) => {
+    const targetUser = users.find((user) => user.id === userId)
+    if (targetUser && isSuperAdminUser(targetUser) && currentStatus === "Active") {
+      toast({
+        title: "Action blocked",
+        description: "Super Admin users cannot be deactivated.",
+        variant: "destructive",
+      })
+      return
+    }
+
     const newStatus = currentStatus === "Active" ? "inactive" : "active"
     const originalUsers = [...users]
 
@@ -508,7 +819,7 @@ export function ManageUsers() {
 
       const data = await response.json()
       if (response.ok && data.code === 200) {
-        await fetchUsers()
+        invalidateUsersListCache()
         toast({
           title: "Success",
           description: data.msg || "User status successfully updated!",
@@ -563,43 +874,6 @@ export function ManageUsers() {
     }
   }
 
-  const fetchRolePermissions = async (roleId: string) => {
-    const token = getAuthToken(router)
-    if (!token) return null
-
-    try {
-      const response = await fetch(URLS.ADD_ROLES_LIST, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      })
-
-      if (!response.ok) return null
-
-      const data = await response.json()
-      if (data.code === 200 && data.data?.items) {
-        const roleData = data.data.items.find(
-          (item: { _id: string }) => item._id === roleId
-        )
-        if (roleData) {
-          const permissions: Record<string, boolean> = {}
-          Object.keys(roleData).forEach((key) => {
-            if (typeof roleData[key] === "number" && key !== "_id" && key !== "role_name") {
-              permissions[key] = roleData[key] === 1
-            }
-          })
-          return permissions
-        }
-      }
-      return null
-    } catch (error) {
-      console.error("Error fetching role permissions:", error)
-      return null
-    }
-  }
-
   const handleUserSelect = async (user: User) => {
     const authUser = getStoredAuthUser()
     if (!authUser || !canManageTargetUser(authUser, user)) {
@@ -614,56 +888,40 @@ export function ManageUsers() {
     setSelectedUser(user)
     setIsPermissionSheetOpen(true)
     setIsLoadingPermissions(true)
-    setSelectedUserRoleId(user.role)
 
-    const permissions = await fetchRolePermissions(user.role)
-    if (permissions) {
-      setModulePermissions(permissions)
-    } else {
-      const initialPermissions: Record<string, boolean> = {}
-      modules.forEach((module) => {
-        module.functions.forEach((func) => {
-          initialPermissions[func.id] = false
-        })
-      })
-      setModulePermissions(initialPermissions)
+    const token = getAuthToken(router)
+    if (!token) {
+      setIsLoadingPermissions(false)
+      return
     }
+
+    // fetchUserPermissions already loads (and caches) the permission catalog.
+    const permissions = await fetchUserPermissions(user.id, token)
+    const catalog = await fetchPermissionCatalog(token)
+    setPermissionModules(catalog.modules)
+    setModulePermissions(permissions ?? buildEmptyPermissions(catalog))
 
     setIsLoadingPermissions(false)
   }
 
-  const updatePermissionApi = async (
-    roleId: string,
-    permissionKey: string,
-    value: boolean
-  ) => {
-    const token = getAuthToken(router)
-    if (!token) return false
-
-    try {
-      const response = await fetch(`${URLS.ROLES_UPDATE}/${roleId}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ [permissionKey]: value ? 1 : 0 }),
-      })
-
-      const data = await response.json()
-      return data.code === 200
-    } catch (error) {
-      console.error("Error updating permission:", error)
-      return false
-    }
-  }
-
   const togglePermission = async (functionId: string) => {
-    if (!selectedUserRoleId) return
+    if (!selectedUser) return
+
+    if (isSuperAdminUser(selectedUser)) {
+      toast({
+        title: "Action blocked",
+        description: "Super Admin permissions cannot be modified.",
+        variant: "destructive",
+      })
+      return
+    }
 
     const authUser = getStoredAuthUser()
     const tier = authUser ? getRoleTier(authUser) : "branch_user"
-    if (tier === "branch_manager" && !currentUserPermissions[functionId]) {
+    if (
+      (tier === "branch_manager" || tier === "branch_user") &&
+      !currentUserPermissions[functionId]
+    ) {
       toast({
         title: "Access denied",
         description: "You can only grant permissions that you have.",
@@ -675,23 +933,51 @@ export function ManageUsers() {
     const newValue = !modulePermissions[functionId]
     setModulePermissions((prev) => ({ ...prev, [functionId]: newValue }))
 
-    const success = await updatePermissionApi(selectedUserRoleId, functionId, newValue)
-    if (success) {
+    const token = getAuthToken(router)
+    if (!token) {
+      setModulePermissions((prev) => ({ ...prev, [functionId]: !newValue }))
+      return
+    }
+
+    const result = await updateUserPermission(selectedUser.id, functionId, newValue, token)
+    if ("permissions" in result) {
+      setModulePermissions(result.permissions)
+
+      // If we just edited the signed-in user's overrides, refresh their session
+      // permissions so nav/actions match Active User permission changes immediately.
+      const currentUserId = resolveAuthUserId(getStoredAuthUser() ?? {})
+      if (currentUserId && currentUserId === selectedUser.id) {
+        patchAuthUserRolePermissions(result.permissions)
+        setCurrentUserPermissions(result.permissions)
+      }
+
       toast({
         title: "Permission Updated",
-        description: `Permission has been ${newValue ? "enabled" : "disabled"}.`,
+        description: `Permission has been ${newValue ? "enabled" : "disabled"} for this user.`,
       })
     } else {
       setModulePermissions((prev) => ({ ...prev, [functionId]: !newValue }))
       toast({
         title: "Error",
-        description: "Failed to update permission. Please try again.",
+        description: result.error || "Failed to update permission. Please try again.",
         variant: "destructive",
       })
     }
   }
 
-  const canEditPermissions = currentTier !== "branch_user"
+  const canEditPermissions =
+    (currentTier === "super_admin" ||
+      currentTier === "admin" ||
+      currentTier === "branch_manager" ||
+      currentUserPermissions.manage_users === true ||
+      currentUserPermissions.manage_roles === true) &&
+    (!selectedUser || !isSuperAdminUser(selectedUser))
+
+  const canEditUserDetails =
+    currentTier === "super_admin" ||
+    currentTier === "admin" ||
+    currentTier === "branch_manager" ||
+    currentUserPermissions.manage_users === true
 
   const defaultBranchId =
     accessibleBranchIds !== "all" ? accessibleBranchIds[0] : undefined
@@ -710,6 +996,40 @@ export function ManageUsers() {
 
     return scoped.length > 0 ? scoped : activeBranches
   }, [activeBranches, accessibleBranchIds])
+
+  const dynamicBranchFilterOptions = React.useMemo(() => {
+    const branchIdsWithUsers = new Set<string>()
+
+    for (const user of users) {
+      if (user.branch_id) {
+        branchIdsWithUsers.add(user.branch_id)
+      }
+    }
+
+    const fromCatalog = filterableBranches.filter((branch) => branchIdsWithUsers.has(branch.id))
+    const catalogIds = new Set(fromCatalog.map((branch) => branch.id))
+
+    const fromUsers: Branch[] = Array.from(branchIdsWithUsers)
+      .filter((id) => !catalogIds.has(id))
+      .map((id) => ({
+        id,
+        org_id: orgId || 0,
+        name: getBranchName(id),
+        code: id.slice(0, 3).toUpperCase(),
+        status: "active" as const,
+      }))
+
+    return [...fromCatalog, ...fromUsers].sort((a, b) => a.name.localeCompare(b.name))
+  }, [users, filterableBranches, getBranchName, orgId])
+
+  React.useEffect(() => {
+    if (
+      branchFilter !== "all" &&
+      !dynamicBranchFilterOptions.some((branch) => branch.id === branchFilter)
+    ) {
+      setBranchFilter("all")
+    }
+  }, [branchFilter, dynamicBranchFilterOptions])
 
   const getRoleName = (user: User) =>
     user.role_name || roles.find((role) => role._id === user.role)?.name || "Unknown Role"
@@ -862,6 +1182,7 @@ export function ManageUsers() {
                             ? "text-red-600 focus:text-red-600"
                             : "text-green-600 focus:text-green-600"
                         }`}
+                        disabled={user.status === "Active" && isSuperAdminUser(user)}
                         onClick={() => handleUserStatusChange(user.id, user.status)}
                       >
                         {user.status === "Active" ? (
@@ -914,7 +1235,7 @@ export function ManageUsers() {
 
       <Card className="border-none shadow-sm">
         <CardContent>
-          {hasAllBranchAccess(currentTier) && filterableBranches.length > 0 && (
+          {hasAllBranchAccess(currentTier) && dynamicBranchFilterOptions.length > 0 && (
             <div className="mb-4">
               <Select value={branchFilter} onValueChange={setBranchFilter}>
                 <SelectTrigger className="h-9 w-full sm:w-[200px]">
@@ -922,7 +1243,7 @@ export function ManageUsers() {
                 </SelectTrigger>
                 <FormSelectContent>
                   <FormSelectItem value="all">All Branches</FormSelectItem>
-                  {filterableBranches.map((branch) => (
+                  {dynamicBranchFilterOptions.map((branch) => (
                     <FormSelectItem key={branch.id} value={branch.id}>
                       {branch.name}
                     </FormSelectItem>
@@ -981,144 +1302,32 @@ export function ManageUsers() {
         user={userToEdit}
         roles={roles}
         branches={filterableBranches}
-        assignableTiers={assignableTiers}
+        assignableTiers={editAssignableTiers}
+        protectRoleAndTier={userToEdit ? isSuperAdminUser(userToEdit) : false}
         onSave={handleSaveEdit}
       />
 
-      <Sheet
+      <UserPermissionsSheet
         open={isPermissionSheetOpen}
         onOpenChange={(open) => {
           setIsPermissionSheetOpen(open)
           if (!open) {
             setSelectedUser(null)
-            setSelectedUserRoleId(null)
           }
         }}
-      >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <SheetHeader className="border-b pb-4">
-            <SheetTitle className="text-xl font-semibold">User Permissions</SheetTitle>
-            {selectedUser && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <div
-                    className={cn(
-                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold",
-                      themePrimaryAvatarClassName
-                    )}
-                  >
-                    {selectedUser.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">{selectedUser.name}</p>
-                    <p className="text-sm text-muted-foreground">{selectedUser.email}</p>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <Badge variant="outline" className={themePrimaryBadgeClassName}>
-                    {ROLE_TIER_LABELS[selectedUser.role_tier]}
-                  </Badge>
-                  <Badge variant="outline" className={themePrimaryBadgeClassName}>
-                    {getRoleName(selectedUser)}
-                  </Badge>
-                  {selectedUser.branch_id && (
-                    <Badge variant="outline">{getBranchName(selectedUser.branch_id)}</Badge>
-                  )}
-                  <Badge
-                    className={
-                      selectedUser.status === "Active"
-                        ? "bg-green-500 text-white"
-                        : "bg-orange-500 text-white"
-                    }
-                  >
-                    {selectedUser.status}
-                  </Badge>
-                </div>
-              </div>
-            )}
-          </SheetHeader>
-
-          <div className="py-4">
-            {isLoadingPermissions ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                <span className="ml-3 text-muted-foreground">Loading permissions...</span>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="mb-4 text-sm text-muted-foreground">
-                  {canEditPermissions
-                    ? "Manage permissions for this user's role. Changes are saved automatically."
-                    : "You have view-only access to this user's permissions."}
-                </p>
-                {modules.map((module) => (
-                  <Collapsible
-                    key={module.id}
-                    className="overflow-hidden rounded-lg border"
-                    defaultOpen={false}
-                  >
-                    <CollapsibleTrigger className="flex w-full items-center justify-between p-3 transition-colors hover:bg-muted/50">
-                      <span className="text-sm font-semibold" style={{ color: module.color }}>
-                        {module.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">
-                          {module.functions.filter((f) => modulePermissions[f.id]).length}/
-                          {module.functions.length} enabled
-                        </span>
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="border-t bg-muted/30">
-                        {module.functions.map((func, index) => {
-                          const managerBlocked =
-                            currentTier === "branch_manager" &&
-                            !currentUserPermissions[func.id]
-                          const switchDisabled = !canEditPermissions || managerBlocked
-
-                          return (
-                          <div
-                            key={func.id}
-                            className={`flex items-center justify-between p-3 transition-colors hover:bg-muted/50 ${
-                              index !== module.functions.length - 1
-                                ? "border-b border-border"
-                                : ""
-                            }`}
-                          >
-                            <div className="flex-1 pr-4">
-                              <p className="text-sm font-medium text-foreground">{func.name}</p>
-                              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                                {func.description}
-                              </p>
-                            </div>
-                            <div className="flex flex-shrink-0 items-center gap-2">
-                              <span
-                                className={`text-xs font-medium ${
-                                  modulePermissions[func.id] ? "text-primary" : "text-muted-foreground"
-                                }`}
-                              >
-                                {modulePermissions[func.id] ? "ON" : "OFF"}
-                              </span>
-                              <Switch
-                                checked={modulePermissions[func.id] || false}
-                                onCheckedChange={() => togglePermission(func.id)}
-                                disabled={switchDisabled}
-                                className="data-[state=checked]:bg-primary"
-                              />
-                            </div>
-                          </div>
-                          )
-                        })}
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ))}
-              </div>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+        user={selectedUser}
+        permissions={modulePermissions}
+        permissionModules={permissionModules}
+        isLoading={isLoadingPermissions}
+        canEdit={canEditUserDetails}
+        canEditPermissions={canEditPermissions}
+        currentTier={currentTier}
+        currentUserPermissions={currentUserPermissions}
+        onTogglePermission={togglePermission}
+        onSaveDetails={handleSaveUserDetails}
+        onUploadAadhaarDocument={handleUploadAadhaarDocument}
+        onUploadPanDocument={handleUploadPanDocument}
+      />
     </div>
   )
 }

@@ -23,7 +23,7 @@ interface ShowNotesDrawerProps {
   onOpenChange: (open: boolean) => void
   entityName?: string
   associateId: string
-  associateTo: string // "lead", "company", "opportunity", "partner", "onboarding", "new_request", "ticket"
+  associateTo: string // "lead", "company", "partner", "onboarding", "new_request", "ticket"
 }
 
 // Helper function to get the appropriate notes URL based on associateTo type
@@ -157,8 +157,6 @@ export function ShowNotesDrawer({
         return "lead"
       case "company":
         return "company"
-      case "opportunity":
-        return "opportunity"
       case "partner":
         return "partner"
       case "onboarding":

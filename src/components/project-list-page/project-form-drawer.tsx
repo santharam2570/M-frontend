@@ -34,8 +34,7 @@ import {
 } from "@/components/ui/select"
 import { MultiSelect } from "@/components/ui/multi-select"
 import { useToast } from "@/hooks/use-toast"
-import URLS from "@/config/urls"
-import { getApiErrorMessage, parseJsonResponse } from "@/lib/api"
+import { getApiErrorMessage } from "@/lib/api"
 
 import {
   getOrgIdFromAuth,
@@ -44,13 +43,18 @@ import {
   getUserBranchId,
   hasAllBranchAccess,
   fetchBranches,
+  filterBranchesForUser,
 } from "@/lib/auth"
 import {
   formInputClassName,
   formSelectTriggerClassName,
   formTextareaClassName,
 } from "@/lib/form-field-styles"
-import { createProjectApi } from "@/lib/projects/project-api"
+import {
+  createProjectApi,
+  fetchProjectSettingsListApi,
+  mapProjectSettingsToOptions,
+} from "@/lib/projects/project-api"
 import { PROPERTY_TYPE_LABELS } from "@/lib/projects/types"
 
 const footerButtonClass = "h-10 min-w-[88px] rounded-md px-4 py-2"
@@ -60,35 +64,10 @@ const propertyTypeOptions = Object.entries(PROPERTY_TYPE_LABELS).map(([value, la
   label,
 }))
 
-type ProjectSettingItem = {
-  _id?: string | { $oid?: string }
-  id?: string | number
-  name?: string
-  default?: number
-}
-
 type SelectOption = {
   value: string
   label: string
   isDefault?: boolean
-}
-
-function resolveSettingId(item: ProjectSettingItem): string {
-  if (item._id && typeof item._id === "object" && item._id.$oid) {
-    return item._id.$oid
-  }
-
-  return String(item._id ?? item.id ?? "")
-}
-
-function mapProjectSettingsToOptions(items: ProjectSettingItem[] | undefined): SelectOption[] {
-  return (items || [])
-    .filter((item) => item.name?.trim() && resolveSettingId(item))
-    .map((item) => ({
-      value: resolveSettingId(item),
-      label: item.name!.trim(),
-      isDefault: item.default === 1,
-    }))
 }
 
 function getDefaultOptionValue(options: SelectOption[]): string {
@@ -175,11 +154,16 @@ export function ProjectFormDrawer({ open, onOpenChange, onSuccess }: ProjectForm
 
         const orgId = getOrgIdFromAuth(authUser)
         const tier = getRoleTier(authUser)
+        const canPickAnyBranch = hasAllBranchAccess(tier)
         const userBranchId = getUserBranchId(authUser)
-        const branches = (await fetchBranches(orgId, token)).filter((b) => b.status === "active")
+        // Org-wide roles need the full catalog (not actor-scoped branch_list).
+        const allBranches = (
+          await fetchBranches(orgId, token, { all: canPickAnyBranch })
+        ).filter((b) => b.status === "active")
+        const branches = filterBranchesForUser(allBranches, authUser)
         const branchOpts = branches.map((b) => ({ value: b.id, label: b.name }))
         setBranchOptions(branchOpts)
-        setShowBranchPicker(hasAllBranchAccess(tier) && branchOpts.length > 0)
+        setShowBranchPicker(canPickAnyBranch && branchOpts.length > 1)
 
         if (userBranchId) {
           form.setValue("branch_id", userBranchId)
@@ -187,25 +171,7 @@ export function ProjectFormDrawer({ open, onOpenChange, onSuccess }: ProjectForm
           form.setValue("branch_id", branchOpts[0].value)
         }
 
-        const response = await fetch(URLS.PROJECT_SETTINGS_LIST, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        const result = await parseJsonResponse<{
-          code?: number
-          msg?: string
-          data?: Record<string, ProjectSettingItem[]>
-        }>(response)
-
-        if (!response.ok || result.code !== 200) {
-          throw new Error(result.msg || "Failed to load project settings.")
-        }
-
-        const data = result.data || {}
+        const data = await fetchProjectSettingsListApi(token)
         const reraOptions = mapProjectSettingsToOptions(data.rera_status)
         const statusOptions = mapProjectSettingsToOptions(data.project_status)
 

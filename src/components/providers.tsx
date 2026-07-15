@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { QueryClient } from "@tanstack/react-query"
-import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client"
+import { useEffect, useState, type ReactNode } from "react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { persistQueryClient } from "@tanstack/react-query-persist-client"
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister"
 import { installFetchTimeout } from "@/lib/fetch-timeout"
 import { QUERY_CACHE_STORAGE_KEY } from "@/lib/query-cache"
+import { UserDataProvider } from "@/hooks/useUserData"
 
 const GC_TIME_MS = 30 * 60 * 1000
 
@@ -33,42 +34,36 @@ function createQueryClient() {
  * App-wide client providers.
  *
  * React Query cache is persisted to localStorage so a full page reload can
- * hydrate from the last session instead of flashing loading skeletons. Children
- * render only after the client mounts so the sync persister can restore cache
- * before pages read from it.
+ * hydrate from the last session instead of flashing loading skeletons.
+ *
+ * Persistence is attached imperatively after mount so the provider tree stays
+ * stable (no remount / double useEffect fetch on first paint).
  */
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(createQueryClient)
-  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setMounted(true)
-  }, [])
+    const persister = createSyncStoragePersister({
+      storage: window.localStorage,
+      key: QUERY_CACHE_STORAGE_KEY,
+    })
 
-  const persister = useMemo(
-    () =>
-      mounted
-        ? createSyncStoragePersister({
-            storage: window.localStorage,
-            key: QUERY_CACHE_STORAGE_KEY,
-          })
-        : null,
-    [mounted]
-  )
+    const [unsubscribe, restorePromise] = persistQueryClient({
+      queryClient,
+      persister,
+      maxAge: GC_TIME_MS,
+    })
 
-  if (!mounted || !persister) {
-    return null
-  }
+    void restorePromise
+
+    return () => {
+      unsubscribe()
+    }
+  }, [queryClient])
 
   return (
-    <PersistQueryClientProvider
-      client={queryClient}
-      persistOptions={{
-        persister,
-        maxAge: GC_TIME_MS,
-      }}
-    >
-      {children}
-    </PersistQueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <UserDataProvider>{children}</UserDataProvider>
+    </QueryClientProvider>
   )
 }

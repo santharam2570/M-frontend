@@ -52,6 +52,7 @@ interface EditUserDialogProps {
   roles: Role[]
   branches: Branch[]
   assignableTiers: RoleTier[]
+  protectRoleAndTier?: boolean
   onSave: (user: EditableUser) => Promise<boolean>
 }
 
@@ -62,13 +63,18 @@ export function EditUserDialog({
   roles,
   branches,
   assignableTiers,
+  protectRoleAndTier = false,
   onSave,
 }: EditUserDialogProps) {
   const [formData, setFormData] = React.useState<EditableUser | null>(null)
   const [isSaving, setIsSaving] = React.useState(false)
 
   const needsBranch =
-    formData?.role_tier === "branch_manager" || formData?.role_tier === "branch_user"
+    !protectRoleAndTier &&
+    (formData?.role_tier === "branch_manager" || formData?.role_tier === "branch_user")
+
+  const lockedRoleName =
+    roles.find((role) => role._id === formData?.role)?.name ?? "Super Admin"
 
   React.useEffect(() => {
     if (user && open) {
@@ -150,34 +156,49 @@ export function EditUserDialog({
                 <Label htmlFor="edit-user-role-tier" className={formModalLabelClassName}>
                   Role Tier
                 </Label>
-                <Select
-                  value={formData.role_tier}
-                  onValueChange={(value: RoleTier) =>
-                    setFormData((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            role_tier: value,
-                            branch_id:
-                              value === "super_admin" || value === "admin"
-                                ? undefined
-                                : prev.branch_id,
-                          }
-                        : null
-                    )
-                  }
-                >
-                  <SelectTrigger id="edit-user-role-tier" className={formSelectTriggerClassName}>
-                    <SelectValue placeholder="Select role tier" />
-                  </SelectTrigger>
-                  <FormSelectContent>
-                    {assignableTiers.map((tier) => (
-                      <FormSelectItem key={tier} value={tier}>
-                        {ROLE_TIER_LABELS[tier]}
-                      </FormSelectItem>
-                    ))}
-                  </FormSelectContent>
-                </Select>
+                {protectRoleAndTier ? (
+                  <Input
+                    id="edit-user-role-tier"
+                    value={ROLE_TIER_LABELS[formData.role_tier]}
+                    readOnly
+                    disabled
+                    className={formInputClassName}
+                  />
+                ) : (
+                  <Select
+                    value={formData.role_tier}
+                    onValueChange={(value: RoleTier) =>
+                      setFormData((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              role_tier: value,
+                              branch_id:
+                                value === "super_admin" || value === "admin"
+                                  ? undefined
+                                  : prev.branch_id,
+                            }
+                          : null
+                      )
+                    }
+                  >
+                    <SelectTrigger id="edit-user-role-tier" className={formSelectTriggerClassName}>
+                      <SelectValue placeholder="Select role tier" />
+                    </SelectTrigger>
+                    <FormSelectContent>
+                      {assignableTiers.map((tier) => (
+                        <FormSelectItem key={tier} value={tier}>
+                          {ROLE_TIER_LABELS[tier]}
+                        </FormSelectItem>
+                      ))}
+                    </FormSelectContent>
+                  </Select>
+                )}
+                {protectRoleAndTier ? (
+                  <p className="text-xs text-muted-foreground">
+                    Super Admin tier is protected and cannot be changed.
+                  </p>
+                ) : null}
               </div>
 
               {needsBranch && (
@@ -211,23 +232,38 @@ export function EditUserDialog({
                 <Label htmlFor="edit-user-role" className={formModalLabelClassName}>
                   Permission Role
                 </Label>
-                <Select
-                  value={formData.role}
-                  onValueChange={(value) =>
-                    setFormData((prev) => (prev ? { ...prev, role: value } : null))
-                  }
-                >
-                  <SelectTrigger id="edit-user-role" className={formSelectTriggerClassName}>
-                    <SelectValue placeholder="Select a role" />
-                  </SelectTrigger>
-                  <FormSelectContent>
-                    {roles.map((role) => (
-                      <FormSelectItem key={role._id} value={role._id}>
-                        {role.name}
-                      </FormSelectItem>
-                    ))}
-                  </FormSelectContent>
-                </Select>
+                {protectRoleAndTier ? (
+                  <Input
+                    id="edit-user-role"
+                    value={lockedRoleName}
+                    readOnly
+                    disabled
+                    className={formInputClassName}
+                  />
+                ) : (
+                  <Select
+                    value={formData.role}
+                    onValueChange={(value) =>
+                      setFormData((prev) => (prev ? { ...prev, role: value } : null))
+                    }
+                  >
+                    <SelectTrigger id="edit-user-role" className={formSelectTriggerClassName}>
+                      <SelectValue placeholder="Select a role" />
+                    </SelectTrigger>
+                    <FormSelectContent>
+                      {roles.map((role) => (
+                        <FormSelectItem key={role._id} value={role._id}>
+                          {role.name}
+                        </FormSelectItem>
+                      ))}
+                    </FormSelectContent>
+                  </Select>
+                )}
+                {protectRoleAndTier ? (
+                  <p className="text-xs text-muted-foreground">
+                    Super Admin permission role is protected and cannot be changed.
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>

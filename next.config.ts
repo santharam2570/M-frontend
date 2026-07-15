@@ -1,13 +1,14 @@
 import type { NextConfig } from "next";
 
+import { DEFAULT_API_BASE_URL } from "./src/config/environment";
+
 /**
  * Derive the API host so next/image can optimize remotely-served assets
  * (e.g. profile photos at `${API_BASE_URL}/uploads/profile/...`).
  */
 function getApiRemotePattern() {
   const apiBaseUrl =
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "https://supernova-contented-distress.ngrok-free.dev";
+    process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL;
 
   try {
     const url = new URL(apiBaseUrl);
@@ -32,6 +33,15 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
     remotePatterns: getApiRemotePattern(),
+  },
+  async redirects() {
+    return [
+      {
+        source: "/settings/profile",
+        destination: "/profile",
+        permanent: false,
+      },
+    ];
   },
 };
 

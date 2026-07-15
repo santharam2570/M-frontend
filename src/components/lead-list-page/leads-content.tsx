@@ -2,9 +2,9 @@
 
 import type React from "react"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { FilterIcon, Home, Plus, Search, XCircleIcon, X, Check } from "lucide-react"
+import { FilterIcon, Plus, Search, Shield, XCircleIcon, X, Check } from "lucide-react"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -28,9 +28,7 @@ import { FilterDrawer } from "@/components/lead-list-page/filter-drawer"
 import { LeadFormDrawer } from "@/components/lead-list-page/lead-form-drawer"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { ExportDialog } from "@/components/lead-list-page/export-dialog"
-import { ImportDialog } from "@/components/lead-list-page/import-dialog"
-import { useRouter } from "next/navigation"
+import { useLeadPermissions } from "@/hooks/useLeadPermissions"
 import {
   Tooltip,
   TooltipContent,
@@ -52,9 +50,25 @@ interface FilterState {
   purpose: string
   source: string
   assigned_to: string
+  branch_id: string
   start_date: string
   end_date: string
   create_by: string
+  [key: string]: string
+}
+
+const EMPTY_COLUMNS: ColumnPref[] = []
+const EMPTY_FILTER_STATE: FilterState = {
+  lead_status: "",
+  stage: "",
+  customer_type: "",
+  purpose: "",
+  source: "",
+  assigned_to: "",
+  branch_id: "",
+  start_date: "",
+  end_date: "",
+  create_by: "",
 }
 
 export function LeadsContent() {
@@ -68,15 +82,7 @@ export function LeadsContent() {
   const [leadFormOpen, setLeadFormOpen] = useState(false)
   const [customFilters, setCustomFilters] = useState<CustomFilter[]>([])
   const [activeCustomFilters, setActiveCustomFilters] = useState<FilterState>({
-    lead_status: "",
-    stage: "",
-    customer_type: "",
-    purpose: "",
-    source: "",
-    assigned_to: "",
-    start_date: "",
-    end_date: "",
-    create_by: "",
+    ...EMPTY_FILTER_STATE,
   })
   const [activeMetricFilter, setActiveMetricFilter] = useState<string | null>(null)
   // Separate state for metrics filters
@@ -86,13 +92,16 @@ export function LeadsContent() {
   const [activeStatusId, setActiveStatusId] = useState<string | null>(null)
   const { toast } = useToast()
   const isMobile = useIsMobile()
-  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const {
+    userData,
+    canViewLeads,
+    canAddLead,
+    isLoading: isPermissionsLoading,
+  } = useLeadPermissions()
 
   const [currentPage, setCurrentPage] = useState(1)
   const [open, setOpen] = useState(false)
-  const router = useRouter();
   const queryClient = useQueryClient();
-  const [userData, setUserData] = useState<any>(null);
   // Bumped whenever the lead list needs to reload (e.g. after adding a lead)
   // without triggering a full page reload.
   const refreshKey = 0
@@ -101,10 +110,10 @@ export function LeadsContent() {
     id: number
   } | null>(null)
 
-  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [filteredCount, setFilteredCount] = useState(0);
 
   const token = userData?.access_token as string | undefined
+  const metricsBranchId = activeCustomFilters.branch_id || undefined
 
   // Lead summary metrics are cached across navigations: returning to this page
   // shows the previously-loaded numbers immediately (no loading flash) and only
@@ -114,9 +123,12 @@ export function LeadsContent() {
     isLoading: isMetricsLoading,
     refetch: refetchMetrics,
   } = useQuery({
-    queryKey: ["lead-metrics"],
+    queryKey: ["lead-metrics", metricsBranchId ?? "all"],
     enabled: !!token,
-    queryFn: () => fetchLeadMetrics(token, 7),
+    queryFn: () =>
+      fetchLeadMetrics(token, 7, {
+        branchId: metricsBranchId,
+      }),
     staleTime: 5 * 60 * 1000,
   })
 
@@ -135,40 +147,22 @@ export function LeadsContent() {
   })
 
   const columnsLoaded = !!columnConfig
-  const visibleColumns = visibleColumnsOverride ?? columnConfig?.visibleColumns ?? []
-  const allColumns = allColumnsOverride ?? columnConfig?.modalColumns ?? []
-
-  useEffect(() => {
-    try {
-      const storedData = localStorage.getItem('map_user') ?? '{}';
-      const userData = JSON.parse(storedData);
-      if (!userData?.access_token) {
-        router.push('/login');
-      } else {
-        setUserData(userData);
-      }
-    } catch (error) {
-      console.error('Error parsing user data:', error);
-      router.push('/login');
-    }
-  }, []);
+  // Stabilize empty fallbacks so LeadsTable's fetch effect does not re-fire every render.
+  const visibleColumns = useMemo(
+    () => visibleColumnsOverride ?? columnConfig?.visibleColumns ?? EMPTY_COLUMNS,
+    [visibleColumnsOverride, columnConfig?.visibleColumns],
+  )
+  const allColumns = useMemo(
+    () => allColumnsOverride ?? columnConfig?.modalColumns ?? EMPTY_COLUMNS,
+    [allColumnsOverride, columnConfig?.modalColumns],
+  )
 
   // Default view: show active leads without a lead_status ObjectId filter.
   // The API already scopes results to status=active; filtering by lead_status
   // excludes records that do not have that field populated yet.
   const setDefaultStatusFilter = useCallback(() => {
     setActiveStatusId(null);
-    setActiveCustomFilters({
-      lead_status: "",
-      stage: "",
-      customer_type: "",
-      purpose: "",
-      source: "",
-      assigned_to: "",
-      start_date: "",
-      end_date: "",
-      create_by: "",
-    });
+    setActiveCustomFilters({ ...EMPTY_FILTER_STATE });
     localStorage.removeItem('current_filters');
     localStorage.removeItem('current_lead_metrics_filters');
     setActiveMetricFilter(null);
@@ -208,22 +202,12 @@ export function LeadsContent() {
         setHasActiveMetricsFilter(false)
 
         let filterArray: any[] = []
-        let filterState: FilterState = {
-          lead_status: "",
-          stage: "",
-          customer_type: "",
-          purpose: "",
-          source: "",
-          assigned_to: "",
-          start_date: "",
-          end_date: "",
-          create_by: "",
-        }
+        let filterState: FilterState = { ...EMPTY_FILTER_STATE }
 
         if (Array.isArray(filters)) {
           filterArray = filters
           filters.forEach((f: any) => {
-            const uiField = f.field === "stages" ? "stage" : f.field
+            const uiField = f.field === "stages" ? "stage" : f.field === "branch" ? "branch_id" : f.field
 
             if (
               f.field === "create_date" &&
@@ -247,6 +231,11 @@ export function LeadsContent() {
               filterState.source = f.selected_values[0]
             } else if (f.field === "assigned_to" && f.selected_values?.length) {
               filterState.assigned_to = f.selected_values[0]
+            } else if (
+              (f.field === "branch_id" || f.field === "branch") &&
+              f.selected_values?.length
+            ) {
+              filterState.branch_id = f.selected_values[0]
             } else if (f.field === "create_date" && f.selected_values?.length) {
               filterState.start_date = f.selected_values[0]
               filterState.end_date = f.selected_values[0]
@@ -255,13 +244,22 @@ export function LeadsContent() {
             }
           })
         } else {
-          filterState = filters
-          const { start_date, end_date, ...otherFilters } = filters
+          filterState = { ...EMPTY_FILTER_STATE, ...filters }
+          const { start_date, end_date, ...otherFilters } = filterState
           filterArray = Object.entries(otherFilters)
             .filter(
               ([key, value]) =>
                 value !== "" &&
-                ["lead_status", "stage", "customer_type", "purpose", "source", "assigned_to", "create_by"].includes(key),
+                [
+                  "lead_status",
+                  "stage",
+                  "customer_type",
+                  "purpose",
+                  "source",
+                  "assigned_to",
+                  "branch_id",
+                  "create_by",
+                ].includes(key),
             )
             .map(([field, value]) => ({
               field: field === "stage" ? "stages" : field,
@@ -334,17 +332,7 @@ export function LeadsContent() {
         }
 
         localStorage.removeItem("current_filters")
-        setActiveCustomFilters({
-          lead_status: "",
-          stage: "",
-          customer_type: "",
-          purpose: "",
-          source: "",
-          assigned_to: "",
-          start_date: "",
-          end_date: "",
-          create_by: "",
-        })
+        setActiveCustomFilters({ ...EMPTY_FILTER_STATE })
 
         setActiveMetricFilter(metricType)
         setHasActiveMetricsFilter(true)
@@ -468,9 +456,36 @@ export function LeadsContent() {
     [toast, handleApplyFilters],
   )
 
-  const exportRecordCount = searchQuery || activeFilter || hasActiveCustomFilters || activeMetricFilter
-    ? filteredCount
-    : totalLeads
+  if (isPermissionsLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center py-20">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          <span className="text-sm">Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!canViewLeads) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden p-4 pt-0">
+        <Card className="border-none shadow-sm">
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <Shield className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">Access restricted</p>
+              <p className="text-sm text-muted-foreground">
+                You don&apos;t have permission to view leads. Ask an admin to enable the Lead permission for your role.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   const leadsTableContent = columnsLoaded ? (
     <LeadsTable
@@ -610,15 +625,17 @@ export function LeadsContent() {
                 </button>
               )}
             </div>
-            <Button
-              size="sm"
-              className="h-8 shrink-0 gap-1.5 px-3 text-xs"
-              onClick={() => setLeadFormOpen(true)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {!isMobile && "Add Lead"}
-              {isMobile && "Add"}
-            </Button>
+            {canAddLead && (
+              <Button
+                size="sm"
+                className="h-8 shrink-0 gap-1.5 px-3 text-xs"
+                onClick={() => setLeadFormOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {!isMobile && "Add Lead"}
+                {isMobile && "Add"}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -649,16 +666,6 @@ export function LeadsContent() {
         open={leadFormOpen}
         onOpenChange={setLeadFormOpen}
         onSave={handleSaveLead}
-      />
-
-      <ExportDialog
-        open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
-        totalRecords={exportRecordCount}
-      />
-      <ImportDialog
-        open={importDialogOpen}
-        onOpenChange={setImportDialogOpen}
       />
     </div>
   )

@@ -7,10 +7,6 @@ export const entityPages: Record<string, EntityPageConfig> = {
   company: { title: "Company", moduleName: "Company" },
   contact: { title: "Contact", moduleName: "Contact" },
   product: { title: "Product", moduleName: "Product" },
-  opportunity: {
-    title: "Opportunity",
-    moduleName: "Opportunity",
-  },
   quotes: { title: "Quotes", moduleName: "Quotes" },
   "sale-order": {
     title: "Sales Order",
@@ -36,6 +32,7 @@ export const entityPages: Record<string, EntityPageConfig> = {
   partners: { title: "Partners", moduleName: "Partners" },
   ticket: { title: "Tickets", moduleName: "Tickets" },
   projects: { title: "Projects", moduleName: "Projects" },
+  agents: { title: "Agents", moduleName: "Agents" },
   installation: {
     title: "Installation",
     moduleName: "Installation",

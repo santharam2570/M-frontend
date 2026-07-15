@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Check, ChevronsUpDown, Filter, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +16,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Sheet,
   SheetContent,
@@ -30,13 +31,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { ProjectFilterState, ProjectStatus, PropertyType, ReraStatus } from "@/lib/projects/types"
-import {
-  PROJECT_STATUS_LABELS,
-  PROPERTY_TYPE_LABELS,
-  RERA_STATUS_LABELS,
-} from "@/lib/projects/types"
+import { useProjectPermissions } from "@/hooks/useProjectPermissions"
+import { useUserData } from "@/hooks/useUserData"
 import { formSelectTriggerClassName } from "@/lib/form-field-styles"
+import {
+  fetchProjectFilterOptionsApi,
+  type ProjectSettingOption,
+} from "@/lib/projects/project-api"
+import {
+  EMPTY_PROJECT_FILTERS,
+  type ProjectFilterState,
+} from "@/lib/projects/types"
 import { cn } from "@/lib/utils"
 
 interface ProjectFilterDrawerProps {
@@ -44,7 +49,6 @@ interface ProjectFilterDrawerProps {
   onOpenChange: (open: boolean) => void
   filters: ProjectFilterState
   onFiltersChange: (filters: ProjectFilterState) => void
-  locationOptions: string[]
 }
 
 type FilterKey = keyof ProjectFilterState
@@ -53,47 +57,40 @@ interface FilterDefinition {
   key: FilterKey
   name: string
   type: "select" | "combobox"
-}
-
-const EMPTY_FILTERS: ProjectFilterState = {
-  status: "",
-  location: "",
-  property_type: "",
-  rera_status: "",
+  orgWideOnly?: boolean
 }
 
 const FILTER_DEFINITIONS: FilterDefinition[] = [
+  { key: "branch_id", name: "Branch", type: "select", orgWideOnly: true },
   { key: "status", name: "Project Status", type: "select" },
   { key: "location", name: "Locality", type: "combobox" },
   { key: "property_type", name: "Property Type", type: "select" },
   { key: "rera_status", name: "RERA Status", type: "select" },
 ]
 
-const STATUS_COLORS: Record<ProjectStatus, string> = {
-  active: "#10b981",
-  upcoming: "#3b82f6",
-  sold_out: "#64748b",
-  on_hold: "#f59e0b",
-}
-
-const RERA_COLORS: Record<ReraStatus, string> = {
-  approved: "#10b981",
-  pending: "#f59e0b",
-  not_applicable: "#94a3b8",
-}
-
 const footerButtonClass = "h-10 min-w-[88px] rounded-md px-4 py-2"
 
-function getDisplayLabel(key: FilterKey, value: string): string {
+function getDisplayLabel(
+  key: FilterKey,
+  value: string,
+  options: {
+    statusOptions: ProjectSettingOption[]
+    reraOptions: ProjectSettingOption[]
+    propertyTypeOptions: ProjectSettingOption[]
+    branchOptions: Array<{ value: string; label: string }>
+  },
+): string {
   if (!value) return ""
 
   switch (key) {
+    case "branch_id":
+      return options.branchOptions.find((item) => item.value === value)?.label || value
     case "status":
-      return PROJECT_STATUS_LABELS[value as ProjectStatus] || value
+      return options.statusOptions.find((item) => item.value === value)?.label || value
     case "property_type":
-      return PROPERTY_TYPE_LABELS[value as PropertyType] || value
+      return options.propertyTypeOptions.find((item) => item.value === value)?.label || value
     case "rera_status":
-      return RERA_STATUS_LABELS[value as ReraStatus] || value
+      return options.reraOptions.find((item) => item.value === value)?.label || value
     default:
       return value
   }
@@ -169,14 +166,68 @@ function LocalityCombobox({
   )
 }
 
+function FilterFieldSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-4 w-24" />
+      <Skeleton className="h-10 w-full" />
+    </div>
+  )
+}
+
 export function ProjectFilterDrawer({
   open,
   onOpenChange,
   filters,
   onFiltersChange,
-  locationOptions,
 }: ProjectFilterDrawerProps) {
+  const { userData, canAccessAllBranches } = useProjectPermissions()
+  const { orgId } = useUserData()
   const [draft, setDraft] = useState<ProjectFilterState>(filters)
+  const [isLoading, setIsLoading] = useState(false)
+  const [statusOptions, setStatusOptions] = useState<ProjectSettingOption[]>([])
+  const [reraOptions, setReraOptions] = useState<ProjectSettingOption[]>([])
+  const [propertyTypeOptions, setPropertyTypeOptions] = useState<ProjectSettingOption[]>([])
+  const [locationOptions, setLocationOptions] = useState<string[]>([])
+  const [branchOptions, setBranchOptions] = useState<Array<{ value: string; label: string }>>([])
+
+  const filterDefinitions = useMemo(
+    () => FILTER_DEFINITIONS.filter((def) => !def.orgWideOnly || canAccessAllBranches),
+    [canAccessAllBranches],
+  )
+
+  const labelOptions = useMemo(
+    () => ({ statusOptions, reraOptions, propertyTypeOptions, branchOptions }),
+    [statusOptions, reraOptions, propertyTypeOptions, branchOptions],
+  )
+
+  const fetchFilterOptions = async () => {
+    try {
+      setIsLoading(true)
+      const token = userData?.access_token as string | undefined
+      if (!token) return
+
+      const options = await fetchProjectFilterOptionsApi({
+        token,
+        orgId: orgId || undefined,
+      })
+
+      setStatusOptions(options.statusOptions)
+      setReraOptions(options.reraOptions)
+      setPropertyTypeOptions(options.propertyTypeOptions)
+      setLocationOptions(options.locationOptions)
+      setBranchOptions(options.branchOptions)
+    } catch (error) {
+      console.error("Error fetching project filter options:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void fetchFilterOptions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount / auth ready
+  }, [userData?.access_token, orgId, canAccessAllBranches])
 
   useEffect(() => {
     if (open) {
@@ -184,19 +235,25 @@ export function ProjectFilterDrawer({
     }
   }, [open, filters])
 
-  const activeFilterCount = Object.values(draft).filter((value) => value.trim() !== "").length
+  const activeFilterCount = filterDefinitions.filter(
+    (def) => draft[def.key].trim() !== "",
+  ).length
 
   const updateDraft = (key: FilterKey, value: string) => {
     setDraft((prev) => ({ ...prev, [key]: value }))
   }
 
   const handleReset = () => {
-    setDraft(EMPTY_FILTERS)
-    onFiltersChange(EMPTY_FILTERS)
+    setDraft(EMPTY_PROJECT_FILTERS)
+    onFiltersChange(EMPTY_PROJECT_FILTERS)
   }
 
   const handleApply = () => {
-    onFiltersChange(draft)
+    const next: ProjectFilterState = { ...EMPTY_PROJECT_FILTERS, ...draft }
+    if (!canAccessAllBranches) {
+      next.branch_id = ""
+    }
+    onFiltersChange(next)
     onOpenChange(false)
   }
 
@@ -213,108 +270,85 @@ export function ProjectFilterDrawer({
       )
     }
 
-    if (filterDef.key === "status") {
+    if (filterDef.key === "branch_id") {
       return (
         <Select
           value={currentValue || "all"}
-          onValueChange={(value) => updateDraft("status", value === "all" ? "" : value)}
+          onValueChange={(value) => updateDraft("branch_id", value === "all" ? "" : value)}
         >
           <SelectTrigger size="form" className={formSelectTriggerClassName}>
-            <SelectValue placeholder="All statuses">
-              {currentValue ? (
+            <SelectValue placeholder="All branches" />
+          </SelectTrigger>
+          <FormSelectContent>
+            <FormSelectItem value="all">All branches</FormSelectItem>
+            {branchOptions.map((option) => (
+              <FormSelectItem key={option.value} value={option.value}>
+                {option.label}
+              </FormSelectItem>
+            ))}
+          </FormSelectContent>
+        </Select>
+      )
+    }
+
+    const optionList =
+      filterDef.key === "status"
+        ? statusOptions
+        : filterDef.key === "property_type"
+          ? propertyTypeOptions
+          : filterDef.key === "rera_status"
+            ? reraOptions
+            : []
+
+    const allLabel =
+      filterDef.key === "status"
+        ? "All statuses"
+        : filterDef.key === "property_type"
+          ? "All types"
+          : "All RERA statuses"
+
+    const selectedOption = optionList.find((option) => option.value === currentValue)
+    const showColor =
+      filterDef.key === "status" || filterDef.key === "rera_status"
+
+    return (
+      <Select
+        value={currentValue || "all"}
+        onValueChange={(value) => updateDraft(filterDef.key, value === "all" ? "" : value)}
+      >
+        <SelectTrigger size="form" className={formSelectTriggerClassName}>
+          <SelectValue placeholder={allLabel}>
+            {currentValue && showColor ? (
+              <span className="flex items-center gap-2">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: selectedOption?.color || "#64748b" }}
+                />
+                {getDisplayLabel(filterDef.key, currentValue, labelOptions)}
+              </span>
+            ) : null}
+          </SelectValue>
+        </SelectTrigger>
+        <FormSelectContent>
+          <FormSelectItem value="all">{allLabel}</FormSelectItem>
+          {optionList.map((option) => (
+            <FormSelectItem key={option.value} value={option.value}>
+              {showColor ? (
                 <span className="flex items-center gap-2">
                   <span
                     className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: STATUS_COLORS[currentValue as ProjectStatus] }}
+                    style={{ backgroundColor: option.color || "#64748b" }}
                   />
-                  {getDisplayLabel("status", currentValue)}
+                  {option.label}
                 </span>
-              ) : null}
-            </SelectValue>
-          </SelectTrigger>
-          <FormSelectContent>
-            <FormSelectItem value="all">All statuses</FormSelectItem>
-            {(Object.entries(PROJECT_STATUS_LABELS) as [ProjectStatus, string][]).map(
-              ([value, label]) => (
-                <FormSelectItem key={value} value={value}>
-                  <span className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: STATUS_COLORS[value] }}
-                    />
-                    {label}
-                  </span>
-                </FormSelectItem>
-              ),
-            )}
-          </FormSelectContent>
-        </Select>
-      )
-    }
-
-    if (filterDef.key === "property_type") {
-      return (
-        <Select
-          value={currentValue || "all"}
-          onValueChange={(value) => updateDraft("property_type", value === "all" ? "" : value)}
-        >
-          <SelectTrigger size="form" className={formSelectTriggerClassName}>
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <FormSelectContent>
-            <FormSelectItem value="all">All types</FormSelectItem>
-            {(Object.entries(PROPERTY_TYPE_LABELS) as [PropertyType, string][]).map(
-              ([value, label]) => (
-                <FormSelectItem key={value} value={value}>
-                  {label}
-                </FormSelectItem>
-              ),
-            )}
-          </FormSelectContent>
-        </Select>
-      )
-    }
-
-    if (filterDef.key === "rera_status") {
-      return (
-        <Select
-          value={currentValue || "all"}
-          onValueChange={(value) => updateDraft("rera_status", value === "all" ? "" : value)}
-        >
-          <SelectTrigger size="form" className={formSelectTriggerClassName}>
-            <SelectValue placeholder="All RERA statuses">
-              {currentValue ? (
-                <span className="flex items-center gap-2">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: RERA_COLORS[currentValue as ReraStatus] }}
-                  />
-                  {getDisplayLabel("rera_status", currentValue)}
-                </span>
-              ) : null}
-            </SelectValue>
-          </SelectTrigger>
-          <FormSelectContent>
-            <FormSelectItem value="all">All RERA statuses</FormSelectItem>
-            {(Object.entries(RERA_STATUS_LABELS) as [ReraStatus, string][]).map(
-              ([value, label]) => (
-                <FormSelectItem key={value} value={value}>
-                  <span className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: RERA_COLORS[value] }}
-                    />
-                    {label}
-                  </span>
-                </FormSelectItem>
-              ),
-            )}
-          </FormSelectContent>
-        </Select>
-      )
-    }
-
-    return null
+              ) : (
+                option.label
+              )}
+            </FormSelectItem>
+          ))}
+        </FormSelectContent>
+      </Select>
+    )
   }
 
   return (
@@ -332,55 +366,73 @@ export function ProjectFilterDrawer({
               ) : null}
             </SheetTitle>
             <SheetDescription className="text-sm text-muted-foreground">
-              Narrow inventory by status, location, and compliance.
+              Narrow inventory by
+              {canAccessAllBranches ? " branch," : ""} status, location, and compliance.
             </SheetDescription>
             <Separator className="mt-4" />
           </SheetHeader>
 
-          {activeFilterCount > 0 ? (
-            <div className="mb-5 flex flex-wrap gap-2">
-              {FILTER_DEFINITIONS.map((filterDef) => {
-                const value = draft[filterDef.key]
-                if (!value) return null
-
-                return (
-                  <Badge
-                    key={filterDef.key}
-                    variant="outline"
-                    className="gap-1 rounded-full py-1 pr-1 pl-2.5 text-xs font-normal"
-                  >
-                    <span className="max-w-[180px] truncate">
-                      {filterDef.name}: {getDisplayLabel(filterDef.key, value)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => updateDraft(filterDef.key, "")}
-                      className="rounded-full p-0.5 transition-colors hover:bg-muted"
-                      aria-label={`Remove ${filterDef.name} filter`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                )
-              })}
+          {isLoading ? (
+            <div className="space-y-5">
+              {canAccessAllBranches ? <FilterFieldSkeleton /> : null}
+              <FilterFieldSkeleton />
+              <FilterFieldSkeleton />
+              <FilterFieldSkeleton />
+              <FilterFieldSkeleton />
             </div>
-          ) : null}
+          ) : (
+            <>
+              {activeFilterCount > 0 ? (
+                <div className="mb-5 flex flex-wrap gap-2">
+                  {filterDefinitions.map((filterDef) => {
+                    const value = draft[filterDef.key]
+                    if (!value) return null
 
-          <div className="space-y-5">
-            {FILTER_DEFINITIONS.map((filterDef) => (
-              <div key={filterDef.key} className="space-y-2">
-                <Label className="text-sm font-medium text-foreground">{filterDef.name}</Label>
-                {renderSelectField(filterDef)}
+                    return (
+                      <Badge
+                        key={filterDef.key}
+                        variant="outline"
+                        className="gap-1 rounded-full py-1 pr-1 pl-2.5 text-xs font-normal"
+                      >
+                        <span className="max-w-[180px] truncate">
+                          {filterDef.name}: {getDisplayLabel(filterDef.key, value, labelOptions)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateDraft(filterDef.key, "")}
+                          className="rounded-full p-0.5 transition-colors hover:bg-muted"
+                          aria-label={`Remove ${filterDef.name} filter`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </Badge>
+                    )
+                  })}
+                </div>
+              ) : null}
+
+              <div className="space-y-5">
+                {filterDefinitions.map((filterDef) => (
+                  <div key={filterDef.key} className="space-y-2">
+                    <Label className="text-sm font-medium text-foreground">{filterDef.name}</Label>
+                    {renderSelectField(filterDef)}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </div>
 
         <div className="flex shrink-0 flex-row-reverse gap-3 border-t bg-background p-4 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
-          <Button className={footerButtonClass} onClick={handleApply}>
+          <Button className={footerButtonClass} onClick={handleApply} disabled={isLoading}>
             Apply Filters
           </Button>
-          <Button variant="outline" className={footerButtonClass} onClick={handleReset}>
+          <Button
+            variant="outline"
+            className={footerButtonClass}
+            onClick={handleReset}
+            disabled={isLoading}
+          >
             Reset
           </Button>
         </div>

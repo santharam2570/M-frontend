@@ -81,6 +81,7 @@ function normalizeLeadMetrics(data: unknown): LeadMetricsData {
 export async function fetchLeadMetrics(
   token?: string,
   agingDays = 7,
+  options?: { branchId?: string },
 ): Promise<LeadMetricsData> {
   const authToken = token ?? getAuthToken()
   if (!authToken) {
@@ -88,8 +89,14 @@ export async function fetchLeadMetrics(
   }
 
   const safeAgingDays = agingDays >= 1 ? agingDays : 7
+  const params = new URLSearchParams({ aging_days: String(safeAgingDays) })
+  const branchId = options?.branchId?.trim()
+  if (branchId && branchId !== "all") {
+    params.set("branch_id", branchId)
+  }
+
   const response = await fetch(
-    `${URLS.LEAD_METRICS}?aging_days=${safeAgingDays}`,
+    `${URLS.LEAD_METRICS}?${params.toString()}`,
     {
       method: "GET",
       headers: {

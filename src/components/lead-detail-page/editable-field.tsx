@@ -23,6 +23,9 @@ import {
   formSelectTriggerClassName,
   leadDetailFieldLabelClassName,
   leadDetailFieldValueClassName,
+  leadDetailIconBoxClassName,
+  leadDetailContactRowClassName,
+  leadDetailInputClassName,
   leadDetailInlineFieldClassName,
   leadDetailSidebarFieldLabelClassName,
   leadDetailSidebarFieldValueClassName,
@@ -66,7 +69,7 @@ function formatDobDisplay(dateStr: string): string {
 
 interface EditableFieldProps {
   field: string
-  value: string
+  value: string | null | undefined
   label: string
   isTextarea?: boolean
   isBold?: boolean
@@ -97,13 +100,17 @@ export function EditableField({
   icon: Icon,
   actions,
 }: EditableFieldProps) {
-  const parseMultiValue = (val: string): string[] =>
-    val ? val.split(",").map((part) => part.trim()).filter(Boolean) : []
+  const parseMultiValue = (val: string | null | undefined): string[] => {
+    if (typeof val !== "string" || !val.trim()) return []
+    return val.split(",").map((part) => part.trim()).filter(Boolean)
+  }
+
+  const safeValue = typeof value === "string" ? value : value == null ? "" : String(value)
 
   const [isEditing, setIsEditing] = useState(false)
   const [isHovering, setIsHovering] = useState(false)
-  const [editValue, setEditValue] = useState(value)
-  const [editMultiValue, setEditMultiValue] = useState<string[]>(() => parseMultiValue(value))
+  const [editValue, setEditValue] = useState(safeValue)
+  const [editMultiValue, setEditMultiValue] = useState<string[]>(() => parseMultiValue(safeValue))
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -125,9 +132,9 @@ export function EditableField({
   }, [isEditing, isTextarea, options])
 
   useEffect(() => {
-    setEditValue(type === "dob" ? formatDobDisplay(value) : value)
-    setEditMultiValue(parseMultiValue(value))
-  }, [value, type])
+    setEditValue(type === "dob" ? formatDobDisplay(safeValue) : safeValue)
+    setEditMultiValue(parseMultiValue(safeValue))
+  }, [safeValue, type])
 
   const handleSave = () => {
     const valueToSave = isMultiSelect ? editMultiValue.join(", ") : editValue
@@ -137,8 +144,8 @@ export function EditableField({
   }
 
   const handleCancel = () => {
-    setEditValue(type === "dob" ? formatDobDisplay(value) : value)
-    setEditMultiValue(parseMultiValue(value))
+    setEditValue(type === "dob" ? formatDobDisplay(safeValue) : safeValue)
+    setEditMultiValue(parseMultiValue(safeValue))
     setIsEditing(false)
     setIsDropdownOpen(false)
   }
@@ -182,7 +189,7 @@ export function EditableField({
   const handleDropdownOpenChange = (open: boolean) => {
     setIsDropdownOpen(open)
     if (!open) {
-      setEditValue(value)
+      setEditValue(safeValue)
       setIsEditing(false)
     }
   }
@@ -195,17 +202,17 @@ export function EditableField({
     (editValue?.trim() ? editValue : `Select ${label.toLowerCase()}`)
 
   // Format URL for display if isUrl is true
-  const displayValue = isUrl && value ? (value.startsWith("http") ? value.replace(/^https?:\/\//, "") : value) : value
+  const displayValue = isUrl && safeValue ? (safeValue.startsWith("http") ? safeValue.replace(/^https?:\/\//, "") : safeValue) : safeValue
   const resolvedDisplayValue = isMultiSelect && options
-    ? parseMultiValue(value)
+    ? parseMultiValue(safeValue)
         .map((id) => options.find((opt) => opt.value === id)?.label || id)
         .join(", ")
     : options
-    ? options.find((opt) => opt.value === value)?.label || value
-    : type === "date" && value?.trim()
-      ? formatDateDisplay(value)
-      : type === "dob" && value?.trim()
-        ? formatDobDisplay(value)
+    ? options.find((opt) => opt.value === safeValue)?.label || safeValue
+    : type === "date" && safeValue.trim()
+      ? formatDateDisplay(safeValue)
+      : type === "dob" && safeValue.trim()
+        ? formatDobDisplay(safeValue)
         : displayValue
   const formattedDisplayValue = resolvedDisplayValue?.trim() ? resolvedDisplayValue : "—"
 
@@ -220,10 +227,13 @@ export function EditableField({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 text-base font-normal text-foreground shadow-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            className={cn(
+              "flex h-10 w-full items-center justify-between gap-2 rounded-md border px-3 text-base font-normal text-foreground shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              leadDetailInputClassName,
+            )}
           >
             <span className="truncate text-left">{selectedEditLabel}</span>
-            <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -281,7 +291,7 @@ export function EditableField({
           onKeyDown={handleKeyDown}
           className={cn(
             "text-base min-h-[72px] resize-none",
-            variant === "detail" ? "mt-1.5 bg-white" : cn(leadDetailInlineFieldClassName, "p-1 min-h-[60px]"),
+            variant === "detail" ? "mt-1.5 bg-background" : cn(leadDetailInlineFieldClassName, "p-1 min-h-[60px]"),
           )}
         />
       ) : options ? (
@@ -397,7 +407,7 @@ export function EditableField({
         variant="ghost"
         size="icon"
         className={cn(
-          "shrink-0 text-slate-400 hover:text-slate-700",
+          "shrink-0 text-muted-foreground hover:text-foreground",
           variant === "detail" ? "h-7 w-7" : "h-6 w-6 ml-1",
           "opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
         )}
@@ -410,12 +420,12 @@ export function EditableField({
   if (variant === "detail") {
     return (
       <div
-        className="group flex items-start gap-3 border-b border-slate-100 py-3 last:border-b-0 last:pb-0 first:pt-0"
+        className={cn("group", leadDetailContactRowClassName)}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
       >
         {Icon ? (
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-500">
+          <div className={leadDetailIconBoxClassName}>
             <Icon className="h-4 w-4" />
           </div>
         ) : null}

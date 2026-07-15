@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Building, Building2, Calendar, RotateCcw, Search, UserPlus, User, Users, Briefcase, FileText, ClipboardList, Clock, Target, Mail, Phone, ChevronRight, TrendingUp } from "lucide-react"
+import { Building, Building2, Calendar, RotateCcw, Search, UserPlus, User, Users, Briefcase, FileText, ClipboardList, Clock, Target, Mail, Phone, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
 
 import { Dialog, DialogContent } from "@/components/ui/dialog"
@@ -54,19 +54,6 @@ type FollowupTaskResult = {
   org_id: number
 }
 
-type OpportunityResult = {
-  _id: string
-  opportunity_name?: string
-  company_id?: string
-  company_name?: string
-  create_date?: string
-  create_date_utc?: string
-  associate_to: string
-  org_id: number
-  opportunity_status_name?: string
-  opportunity_color?: string
-}
-
 type LeadResult = {
   _id: string
   lead_name?: string
@@ -108,7 +95,6 @@ type BulkSearchResponse = {
   company: CompanyResult[]
   contact: ContactResult[]
   followuptask: FollowupTaskResult[]
-  opportunity: OpportunityResult[]
   lead: LeadResult[]
   quote: QuoteResult[]
   task: TaskResult[]
@@ -179,7 +165,23 @@ export function SearchDialog({ open, onOpenChange }: SearchProps) {
         throw new Error(`Search failed: ${response.statusText}`)
       }
 
-      const data: BulkSearchResponse = await response.json()
+      const raw = await response.json()
+      const payload =
+        raw && typeof raw === "object" && "data" in raw && raw.data && typeof raw.data === "object"
+          ? (raw.data as Partial<BulkSearchResponse>)
+          : (raw as Partial<BulkSearchResponse>)
+
+      const data: BulkSearchResponse = {
+        company: Array.isArray(payload.company) ? payload.company : [],
+        contact: Array.isArray(payload.contact) ? payload.contact : [],
+        followuptask: Array.isArray(payload.followuptask) ? payload.followuptask : [],
+        lead: Array.isArray(payload.lead) ? payload.lead : [],
+        quote: Array.isArray(payload.quote) ? payload.quote : [],
+        task: Array.isArray(payload.task) ? payload.task : [],
+        customfieldsearch: Array.isArray(payload.customfieldsearch)
+          ? payload.customfieldsearch
+          : [],
+      }
       setSearchResults(data)
     } catch (error) {
       console.error('Search error:', error)
@@ -257,7 +259,6 @@ export function SearchDialog({ open, onOpenChange }: SearchProps) {
       searchResults.company.length +
       searchResults.contact.length +
       searchResults.followuptask.length +
-      searchResults.opportunity.length +
       searchResults.lead.length +
       searchResults.quote.length +
       searchResults.task.length
@@ -265,36 +266,27 @@ export function SearchDialog({ open, onOpenChange }: SearchProps) {
   }, [searchResults])
   
   // Handle navigation to detail pages
-  const navigateToDetail = (type: string, id: string, companyId?: string) => {
+  const navigateToDetail = (type: string, id: string, _companyId?: string) => {
     onOpenChange(false)
     
     switch (type) {
       case "company":
-        router.push(`/company/detail/${id}`)
+        // Company detail pages are not available yet — open the list.
+        router.push(`/company`)
         break
       case "contact":
-        // Redirect to company details page if company_id is available
-        if (companyId) {
-          router.push(`/company/detail/${companyId}`)
-        } else {
-          // Fallback to contact list if no company_id
-          router.push(`/contact`)
-        }
-        break
-      case "opportunity":
-        router.push(`/opportunity/detail/${id}`)
+        router.push(`/contact`)
         break
       case "lead":
         router.push(`/lead/detail/${id}`)
         break
       case "followuptask":
-        router.push(`/taskdetail/${id}`)
+      case "task":
+        // Task detail pages are not available yet — open calendar.
+        router.push(`/calendar`)
         break
       case "quote":
-        router.push(`/quotes/${id}`)
-        break
-      case "task":
-        router.push(`/taskdetail/${id}`)
+        router.push(`/quotes`)
         break
       default:
         break
@@ -424,12 +416,11 @@ export function SearchDialog({ open, onOpenChange }: SearchProps) {
           <div className="flex flex-col">
             <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="w-full">
               <div className="px-6 pt-3 pb-2 border-b border-border/40">
-                <TabsList className="w-full grid grid-cols-6 h-auto p-1 bg-muted/50">
+                <TabsList className="w-full grid grid-cols-5 h-auto p-1 bg-muted/50">
                   <TabsTrigger value="all" className="w-full">All</TabsTrigger>
                   <TabsTrigger value="leads" className="w-full" disabled={searchResults.lead.length === 0}>Leads</TabsTrigger>
                   <TabsTrigger value="companies" className="w-full" disabled={searchResults.company.length === 0}>Companies</TabsTrigger>
                   <TabsTrigger value="contacts" className="w-full" disabled={searchResults.contact.length === 0}>Contacts</TabsTrigger>
-                  <TabsTrigger value="opportunities" className="w-full" disabled={searchResults.opportunity.length === 0}>Opportunities</TabsTrigger>
                   {/* <TabsTrigger value="tasks" className="w-full" disabled={searchResults.followuptask.length === 0}>Tasks</TabsTrigger> */}
                 </TabsList>
               </div>
@@ -577,73 +568,6 @@ export function SearchDialog({ open, onOpenChange }: SearchProps) {
                             onClick={() => setActiveTab("contacts")}
                           >
                             View all {searchResults.contact.length} contacts
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Opportunities Section */}
-                  {searchResults.opportunity.length > 0 && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        <TrendingUp className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-                        <h3 className="font-semibold text-foreground">Opportunities</h3>
-                        <span className="text-sm text-muted-foreground">
-                          ({searchResults.opportunity.length} {searchResults.opportunity.length === 1 ? "record" : "records"})
-                        </span>
-                      </div>
-                      <div className="space-y-3">
-                        {searchResults.opportunity.slice(0, 3).map((item) => (
-                          <Card 
-                            key={item._id} 
-                            className="p-4 hover:bg-accent/50 transition-colors cursor-pointer group"
-                            onClick={() => navigateToDetail("opportunity", item._id)}
-                          >
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="flex items-start gap-3 flex-1 min-w-0">
-                                <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-950 mt-0.5 flex-shrink-0">
-                                  <TrendingUp className="h-4 w-4 text-orange-600 dark:text-orange-400" />
-                                </div>
-                                <div className="flex-1 min-w-0 space-y-2">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <h4 className="font-semibold text-foreground">{item.opportunity_name}</h4>
-                                    {renderStatusBadge(item.opportunity_status_name, item.opportunity_color)}
-                                  </div>
-                                  {item.company_name && (
-                                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                      <Building2 className="h-3.5 w-3.5 flex-shrink-0" />
-                                      <span>{item.company_name}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                                {item.create_date && (
-                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
-                                    <Calendar className="h-3 w-3" />
-                                    <span>{formatDate(item.create_date)}</span>
-                                  </div>
-                                )}
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8"
-                                >
-                                  <ChevronRight className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          </Card>
-                        ))}
-                        {searchResults.opportunity.length > 3 && (
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="w-full text-xs"
-                            onClick={() => setActiveTab("opportunities")}
-                          >
-                            View all {searchResults.opportunity.length} opportunities
                           </Button>
                         )}
                       </div>
@@ -943,60 +867,6 @@ export function SearchDialog({ open, onOpenChange }: SearchProps) {
                                   </div>
                                 )}
                               </div>
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                            {item.create_date && (
-                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
-                                <Calendar className="h-3 w-3" />
-                                <span>{formatDate(item.create_date)}</span>
-                              </div>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8"
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                    </div>
-                </TabsContent>
-
-                <TabsContent value="opportunities" className="mt-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <TrendingUp className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-                    <h3 className="font-semibold text-foreground">Opportunities</h3>
-                    <span className="text-sm text-muted-foreground">
-                      ({searchResults.opportunity.length} {searchResults.opportunity.length === 1 ? "record" : "records"})
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    {searchResults.opportunity.map((item) => (
-                      <Card 
-                        key={item._id} 
-                        className="p-4 hover:bg-accent/50 transition-colors cursor-pointer group"
-                        onClick={() => navigateToDetail("opportunity", item._id)}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex items-start gap-3 flex-1 min-w-0">
-                            <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-950 mt-0.5 flex-shrink-0">
-                              <TrendingUp className="h-4 w-4 text-orange-600 dark:text-orange-400" />
-                            </div>
-                            <div className="flex-1 min-w-0 space-y-2">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="font-semibold text-foreground">{item.opportunity_name}</h4>
-                                {renderStatusBadge(item.opportunity_status_name, item.opportunity_color)}
-                              </div>
-                              {item.company_name && (
-                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                  <Building2 className="h-3.5 w-3.5 flex-shrink-0" />
-                                  <span>{item.company_name}</span>
-                                </div>
-                              )}
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-2 flex-shrink-0">
